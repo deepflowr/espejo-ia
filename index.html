@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Espejo - AI Mirror</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+        }
+        h1 {
+            margin-bottom: 20px;
+            color: #00ffcc;
+        }
+        #canvas-container {
+            position: relative;
+            border: 4px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: black;
+        }
+        canvas {
+            max-width: 90vw;
+            max-height: 80vh;
+            display: block;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px 20px;
+            border-radius: 20px;
+            background: #333;
+            font-size: 14px;
+        }
+        .connected {
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+        }
+        .state-badge {
+            margin-top: 10px;
+            padding: 6px 16px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            background: #222;
+            color: #888;
+            border: 1px solid #333;
+            transition: all 0.3s;
+        }
+        .state-badge.reposo { color: #666; border-color: #333; }
+        .state-badge.despertar { color: #ffd700; border-color: #ffd700; }
+        .state-badge.captura { color: #ff6b6b; border-color: #ff6b6b; }
+        .state-badge.congelado { color: #74b9ff; border-color: #74b9ff; }
+        .state-badge.lectura { color: #a29bfe; border-color: #a29bfe; }
+        .state-badge.generacion { color: #fd79a8; border-color: #fd79a8; }
+        .state-badge.revelacion { color: #fdcb6e; border-color: #fdcb6e; }
+        .state-badge.espejo_activo { color: #00ffcc; border-color: #00ffcc; }
+        .state-badge.souvenir { color: #e17055; border-color: #e17055; }
+        .state-badge.cierre { color: #636e72; border-color: #636e72; }
+        .countdown-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 160px;
+            font-weight: 800;
+            color: white;
+            text-shadow: 0 0 60px rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.3);
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .countdown-overlay.hidden { opacity: 0; }
+        .message-overlay {
+            position: absolute;
+            bottom: 60px;
+            left: 0; right: 0;
+            text-align: center;
+            padding: 20px;
+            font-size: 28px;
+            font-weight: 300;
+            color: white;
+            text-shadow: 0 0 30px rgba(0,0,0,0.9);
+            background: linear-gradient(transparent, rgba(0,0,0,0.6));
+            transition: opacity 0.5s;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .message-overlay.hidden { opacity: 0; }
+    </style>
+</head>
+<body>
+    <h1>El Espejo</h1>
+    <div id="canvas-container">
+        <canvas id="mirrorCanvas"></canvas>
+        <div id="countdown-overlay" class="countdown-overlay hidden"></div>
+        <div id="message-overlay" class="message-overlay hidden"></div>
+    </div>
+    <div id="state-display" class="state-badge">REPOSO</div>
+    <div id="status" class="status">Connecting to server...</div>
+
+    <script>
+        const canvas = document.getElementById('mirrorCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const stateDisplay = document.getElementById('state-display');
+        
+        canvas.width = 720;
+        canvas.height = 1280;
+
+        let socket;
+        let blobUrl = null;
+        let currentState = 'REPOSO';
+        let countdownEl = document.getElementById('countdown-overlay');
+        let messageEl = document.getElementById('message-overlay');
+
+        const ORCHESTRATOR_URL = 'ws://localhost:3000';
+
+        function resizeCanvas(frameW, frameH) {
+            const maxW = window.innerWidth * 0.9;
+            const maxH = window.innerHeight * 0.8;
+            const aspect = frameW / frameH;
+
+            let displayW, displayH;
+            if (aspect > 1) {
+                displayW = Math.min(maxW, frameW);
+                displayH = displayW / aspect;
+                if (displayH > maxH) { displayH = maxH; displayW = displayH * aspect; }
+            } else {
+                displayH = Math.min(maxH, frameH);
+                displayW = displayH * aspect;
+                if (displayW > maxW) { displayW = maxW; displayH = displayW / aspect; }
+            }
+
+            canvas.width = frameW;
+            canvas.height = frameH;
+            canvas.style.width = Math.round(displayW) + 'px';
+            canvas.style.height = Math.round(displayH) + 'px';
+        }
+
+        function renderBase64Image(b64) {
+            const img = new Image();
+            img.onload = () => {
+                if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+                    resizeCanvas(img.naturalWidth, img.naturalHeight);
+                }
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            };
+            img.src = 'data:image/jpeg;base64,' + b64;
+        }
+
+        function setState(state) {
+            currentState = state;
+            stateDisplay.innerText = state;
+            stateDisplay.className = 'state-badge ' + state.toLowerCase();
+            console.log('State:', state);
+            // Hide message overlay when leaving CONGELADO
+            if (state !== 'CONGELADO') {
+                messageEl.classList.add('hidden');
+            }
+        }
+
+        function handleMessage(data) {
+            switch (data.type) {
+                case 'state':
+                    setState(data.state);
+                    break;
+
+                case 'photo_captured':
+                    renderBase64Image(data.image_b64);
+                    break;
+
+                case 'swap_frame':
+                    renderBase64Image(data.image_b64);
+                    break;
+
+                case 'final_portrait':
+                    renderBase64Image(data.image_b64);
+                    break;
+
+                case 'gen_preview':
+                    renderBase64Image(data.image_b64);
+                    break;
+
+                case 'flash':
+                    // Flash white
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    setTimeout(() => {
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        countdownEl.classList.add('hidden');
+                    }, 300);
+                    break;
+
+                case 'message':
+                    messageEl.classList.remove('hidden');
+                    messageEl.innerText = data.text;
+                    break;
+
+                case 'countdown':
+                    countdownEl.classList.remove('hidden');
+                    countdownEl.innerText = data.value;
+                    break;
+
+                case 'stream_chunk':
+                    // For dev preview, just log
+                    console.log(`[${data.channel}] ${data.text_delta}`);
+                    break;
+
+                case 'reset':
+                    setState('REPOSO');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    break;
+
+                default:
+                    console.log('Unknown event:', data.type);
+            }
+        }
+
+        function connect() {
+            socket = new WebSocket(ORCHESTRATOR_URL);
+
+            socket.onopen = () => {
+                console.log('Connected to orchestrator');
+                statusDiv.innerText = 'Connected to orchestrator';
+                statusDiv.className = 'status connected';
+                // Greet the orchestrator
+                socket.send(JSON.stringify({ type: 'hello' }));
+            };
+
+            socket.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch {
+                        // Raw base64 string fallback
+                        renderBase64Image(event.data);
+                    }
+                } else {
+                    // Binary blob
+                    if (blobUrl) URL.revokeObjectURL(blobUrl);
+                    blobUrl = URL.createObjectURL(event.data);
+                    const img = new Image();
+                    img.onload = () => {
+                        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+                            resizeCanvas(img.naturalWidth, img.naturalHeight);
+                        }
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    };
+                    img.src = blobUrl;
+                }
+            };
+
+            socket.onclose = () => {
+                console.log('Disconnected from orchestrator');
+                statusDiv.innerText = 'Disconnected. Retrying...';
+                statusDiv.className = 'status';
+                if (blobUrl) URL.revokeObjectURL(blobUrl);
+                blobUrl = null;
+                setTimeout(connect, 3000);
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                socket.close();
+            };
+        }
+
+        connect();
+    </script>
+</body>
+</html>

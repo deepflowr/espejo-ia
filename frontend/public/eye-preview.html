@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><title>Eyes Preview</title>
+<style>body{margin:0;overflow:hidden;background:#0a0a0f}
+#info{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);color:rgba(180,190,210,0.7);font:14px Consolas,monospace;text-align:center;pointer-events:none;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:4px;z-index:10}</style>
+</head><body>
+<div id="info">Cargando...</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script type="module">
+import*as THREE from'three';import{GLTFLoader}from'three/addons/loaders/GLTFLoader.js';
+const TOTAL=7,C=[0.15,0.10,0.12,0.18,0.08,0.20].map(v=>new THREE.Color(v,v,v));
+const gR=[new THREE.Color(1,0,0),new THREE.Color(0,1,0),new THREE.Color(0,0,1)];
+const i=document.getElementById('info');
+const s=new THREE.Scene(),c=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,0.1,20);
+c.position.set(0,0,0);
+const r=new THREE.WebGLRenderer({antialias:true});
+r.setSize(innerWidth,innerHeight);r.setPixelRatio(Math.min(devicePixelRatio,2));r.setClearColor(0x0a0a0f);
+document.body.appendChild(r.domElement);
+const[leftBuf,rightBuf]=await Promise.all([
+  fetch('/models/face-parts/left-eye-fixed.glb').then(r=>r.arrayBuffer()),
+  fetch('/models/face-parts/right-eye-fixed.glb').then(r=>r.arrayBuffer())]);
+const lG=await new Promise(r=>{new GLTFLoader().parse(leftBuf,'/',g=>{let ge=null;g.scene.traverse(c=>{if(c.isMesh&&!ge)ge=c.geometry.clone()});r(ge?new THREE.WireframeGeometry(ge):null)})});
+const rG=await new Promise(r=>{new GLTFLoader().parse(rightBuf,'/',g=>{let ge=null;g.scene.traverse(c=>{if(c.isMesh&&!ge)ge=c.geometry.clone()});r(ge?new THREE.WireframeGeometry(ge):null)})});
+const es=[];
+function mk(g,isL){
+  const gc=g.clone(),cl=C[Math.floor(Math.random()*C.length)];
+  const ln=new THREE.LineSegments(gc,new THREE.LineBasicMaterial({color:cl,transparent:true,depthWrite:false,opacity:0.25+Math.random()*0.2}));
+  ln.renderOrder=5;
+  const gh=new THREE.LineSegments(g.clone(),new THREE.LineBasicMaterial({color:cl,transparent:true,depthWrite:false,opacity:0.1}));
+  gh.renderOrder=4;
+  const zd=-0.3-Math.random()*4,sp=-zd*(0.2+Math.random()*0.5);
+  const hS=isL?Math.PI*0.35:-Math.PI*0.4,hE=isL?Math.PI*1.65:Math.PI*0.35;
+  const an=hS+Math.random()*(hE-hS);
+  const bp=new THREE.Vector3(Math.cos(an)*sp,Math.sin(an)*sp*0.6+(Math.random()-0.5)*0.3,zd);
+  const gr=new THREE.Group();gr.position.copy(bp);
+  const sc=0.2+Math.random()*0.4;gr.scale.set(sc,sc,sc);
+  gr.add(ln);gr.add(gh);gh.position.set(0.003,0,0);s.add(gr);
+  const pa=gc.attributes.position;
+  let mn=Infinity,mx=-Infinity;
+  for(let j=1;j<pa.array.length;j+=3){const y=pa.array[j];if(y<mn)mn=y;if(y>mx)mx=y}
+  const cY=(mn+mx)/2,bH=(mx-mn)*0.7;
+  es.push({ln,gh,gr,bp,ph:Math.random()*Math.PI*2,arr:pa.array,or:new Float32Array(pa.array),pa,cY,bH,gA:gh.geometry.attributes.position.array,gP:gh.geometry.attributes.position,gm:gh.material,t:0,dr:0,hl:0});
+}
+for(let i=0;i<TOTAL;i++){mk(lG,1);mk(rG,0)}
+i.textContent='14 ojos - scale 0.2-0.6, depth -0.3 a -4.3';
+(function loop(){requestAnimationFrame(loop);
+  for(const e of es){
+    if(e.hl>0){e.hl-=0.016;if(e.hl<=0){e.dr=-1;e.hl=0}}
+    else if(e.dr!==0){e.t+=e.dr*0.016/0.35;if(e.t>=1){e.t=1;e.hl=0.05+Math.random()*0.08;e.dr=0}else if(e.t<=0){e.t=0;e.dr=0}}
+    if(e.dr===0&&e.hl<=0&&e.t<=0&&Math.random()<0.003)e.dr=1;
+    let sp;if(e.dr>0||e.hl>0)sp=1-Math.pow(1-e.t,3);else sp=e.t*e.t*e.t;
+    for(let j=1;j<e.arr.length;j+=3){const oy=e.or[j],dy=oy-e.cY,ad=Math.abs(dy);let bl=1-ad/e.bH;if(bl<0)bl=0;bl=bl*bl*(3-2*bl);e.arr[j]=oy-dy*bl*sp;e.gA[j]=oy-dy*bl*sp}
+    e.pa.needsUpdate=1;e.gP.needsUpdate=1;
+    const t=performance.now()/1000;e.bp.x+=Math.sin(t*0.001+e.ph)*0.0002;e.bp.y+=Math.cos(t*0.0012+e.ph*0.7)*0.0002;
+    e.gr.position.copy(e.bp);e.gr.lookAt(c.position);
+    e.gm.color.r+=(1-e.gm.color.r)*0.12;e.gm.color.g+=(1-e.gm.color.g)*0.12;e.gm.color.b+=(1-e.gm.color.b)*0.12;
+    e.gh.position.x+=(0.003-e.gh.position.x)*0.08;e.gh.position.y+=(0-e.gh.position.y)*0.08;
+    if(Math.random()<0.005){e.gm.color.copy(gR[Math.floor(Math.random()*3)]);e.gh.position.x=0.006+(Math.random()-0.5)*0.008;e.gh.position.y=(Math.random()-0.5)*0.005}
+  }
+  r.render(s,c)})();
+</script></body></html>

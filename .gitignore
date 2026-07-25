@@ -1,0 +1,34 @@
+﻿# Dependencies
+node_modules/
+frontend/node_modules/
+orchestrator/node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# InsightFace / Vision models (downloadable)
+.insightface/
+vision-service/models/*.tflite
+vision-service/models/*.task
+
+# Build output
+frontend/dist/
+
+# Debug / temp
+debug-photo.jpg
+frontend/public/debug-photo.jpg
+mano.png
+hand-waving.svg
+
+# Reference images (large, aesthetic references)
+referencias estéticas/
+
+# Captures (runtime output)
+captures/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

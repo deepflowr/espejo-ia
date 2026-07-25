@@ -1,0 +1,10 @@
+opencv-python
+insightface
+onnxruntime-gpu
+websockets
+numpy
+pillow
+tqdm
+```
+
+Note: if running on CPU, use `onnxruntime` instead of `onnxruntime-gpu`.
