@@ -106,6 +106,8 @@ espejo/
 | **Frontend — LECTURA state** | ✅ Working | DOM white opacity fade reveal, face-assembly wireframe pairs, polaroid photo with full RGB ghost border + scanner line, process-transparent thinking box (slide-down, RGB ghosts, spinner with elapsed [Xs] timer), structured description streaming, prompt box with PROMPT_ES text (quoted, Consolas, RGB ghosts). |
 | **Ollama streaming** | ✅ Working | `ollama.js` streams `thinking_es` + `descripcion` + `prompt_en` + `prompt_es` channels. System prompt in Spanish. Model outputs structured description with `*` bullets. |
 | **Photo capture (PNG)** | ✅ Working | `capture.py` saves lossless PNG at 1440×2560, base64 via WebSocket. JPEG quality removed in favor of PNG. |
+| **ComfyUI bridge** | ✅ Working | `comfyui.js` sends photo + prompt to ComfyUI API, queues `EspejoIA.json` workflow, tracks progress via WS, fetches output. Mapeo de nodos actualizado. |
+| **Pipeline end-to-end** | ✅ Working | Presencia → Diálogos → Wave → Encuadre → Captura → LECTURA (Ollama) → GENERACION (ComfyUI) → REVELACION. Flujo completo probado. |
 
 ### UI/UX Improvements (Latest Session)
 
@@ -179,7 +181,7 @@ Per `espejo-arquitectura-tecnica.md`, the following milestones remain:
 - [x] `uiServer.js` — updated with protocol-aware `setupUiServer()`
 - [x] `visionClient.js` — updated with event callbacks (onPresence, onGesture, etc.)
 - [x] **`src/services/ollama.js`** — ✅ FULLY IMPLEMENTED. Streaming HTTP client to Ollama (`/api/chat`), parses delimited output into `descripcion` / `prompt_en` / `prompt_es`, forwards chunks as `stream_chunk` events. Supports `think` parameter. System prompt in Spanish with structured description format.
-- [x] `src/services/comfyui.js` — stub (to be implemented)
+- [x] **`src/services/comfyui.js`** — ✅ FULLY IMPLEMENTED. Sends photo + prompt_en to ComfyUI API, queues `EspejoIA.json` workflow, tracks progress via WS, fetches output image via `/api/view`. Callbacks: `onPreview`, `onComplete`, `onError`.
 - [x] `src/services/mail.js` — stub (to be implemented)
 - [x] `src/routes/souvenir.js` — REST endpoint for souvenir form
 
@@ -325,6 +327,10 @@ Eventually should emit JSON:
 - **Multi-person handling** — When multiple faces are detected, the system does not yet select the closest as primary. All close faces trigger presence; hands are tracked for all detected hands.
 - **Face Swap testing/** folder — Contains an older venv and `inswapper_128.onnx` model. May be useful as reference for the faceswap implementation.
 
+### 🔍 Para Revisar
+
+- **Prompt se carga dos veces** — El prompt se envía/carga antes de que termine ComfyUI y otra vez cuando termina. Probablemente código viejo que quedó de la transición entre flujos (Ollama directo → ComfyUI). Revisar `orchestrator/src/index.js` y `orchestrator/src/services/comfyui.js` para ver si hay doble envío de `prompt_en` o duplicación de llamadas.
+
 ---
 ## Recent Updates
 
@@ -465,13 +471,21 @@ Eventually should emit JSON:
   - `tools/check_cameras.py`, `tools/check_hf_repo.py` — Utility scripts.
 - **Ollama models cleaned:** Removed `espejo-vl` (7GB) and `qwen3.5-9b-dsv4-flash` (5.6GB).
 
+### 2026-07-26 (late) — Stream phase fix + ComfyUI node mapping update
+- **Summary:** Fixed two issues found during end-to-end testing. (1) The stream processing in the frontend didn't handle the `idle` phase — when the first `stream_chunk` arrived with `channel='descripcion'` while `streamPhase` was still `'idle'`, nothing was displayed. Now transitions from `idle` → `descripcion` and shows status messages ("enviando foto al modelo", "generando descripción..."). Also now shows description delta even when `done=true` (edge case where complete text arrives in a single chunk). (2) Updated the ComfyUI node channel mapping in `comfyui.js`: removed `prompt_en` (node 62 was stale), kept `prompt_es` (node 69) and `descripcion` (node 75), matching the current `EspejoIA.json` workflow.
+- **Modified:** `frontend/src/main.ts`, `orchestrator/src/services/comfyui.js`
+- **Fixes:**
+  - Stream phase now accepts `idle` → `descripcion` transition (was ignoring it)
+  - Description delta rendered even when `done` flag is true
+  - ComfyUI node map corrected to match actual workflow nodes
+
 ---
 
 ## Next Steps (prioritized)
 
 1. **Frontend animation during LECTURA** (~15s while Ollama processes) — Show dynamic visual feedback: animated thinking particles, floating text fragments, evolving word cloud from the captured photo, morphing face box, or progressive reveal animation. The photo is already shown (`photo_captured` event), and `stream_chunk` events arrive as the thinking/prompts are generated — they could be displayed with typing animation.
 
-2. **ComfyUI bridge** — Implement `orchestrator/src/services/comfyui.js`: send photo + `prompt_en`, receive previews + final portrait.
+2. ✅ **ComfyUI bridge** — Implemented. `comfyui.js` sends photo + `prompt_en`, receives portrait via ComfyUI API.
 
 3. **Face Swap Service** — Python WS server on port 3002 using inswapper_128 + GFPGAN.
 
@@ -483,41 +497,8 @@ Eventually should emit JSON:
 
 7. **Souvenir + mail service** — QR, mini-page, email sending.
 
----
+8. **🔍 Revisar: prompt se carga dos veces** — El prompt se envía antes de ComfyUI y otra vez al terminar. Posible código residual de la transición Ollama→ComfyUI.
 
-## Pending: Native Thinking / Reasoning
-- **Files changed:**
-  - `orchestrator/src/services/ollama.js` — Full streaming implementation with delimiters + `think` parameter support.
-  - `orchestrator/src/index.js` — Ollama wired into LECTURA state.
-  - `orchestrator/src/ws/uiServer.js` — `capture_photo` guard for DESPERTAR→CAPTURA.
-  - `vision-service/src/detector.py` — Presence hysteresis with separate absence counter.
-  - `frontend/src/main.ts` — Landscape→portrait crop in camera drawImage.
-  - `vision-service/src/vision_server.py` — `CAMERA_ROTATION = None` for built-in webcam.
-  - `tools/make_modelfile.py` — Script to generate Ollama Modelfile.
-
----
-
-## Pending: Native Thinking / Reasoning
-
-The `thinking_es` channel is meant to show the model's internal reasoning to the user. Three approaches identified:
-
-1. **Ollama `think` parameter** (preferred) — Ollama API supports `think: true` returning a separate `thinking` field. Requires model-level support. `Qwen3.6:27b` (27.8B, 17GB) has both `vision` + `thinking` tags on Ollama library, making it a candidate. Also check if `qwen3.6` has smaller variants with both features.
-
-2. **`[THINKING_ES]` as generated content** — Ask the model via system prompt to output reasoning as a delimited section before the prompts. Works with any model but is "faked" (generated text, not actual reasoning trace).
-
-3. **Direct `llama-cpp-python`** — Run Qwen3-VL directly with `llama-cpp-python` (bypassing Ollama) for full control over the inference pipeline, potentially enabling access to internal reasoning tokens. Requires investigation.
-
----
-
-## Next Steps
-
-1. **Resolve native thinking approach** — Choose among the three options above.
-2. **ComfyUI bridge** — Implement `orchestrator/src/services/comfyui.js`: send photo + `prompt_en`, receive previews + final portrait. Requires defining the ComfyUI workflow (Z-Image Turbo + ControlNet).
-3. **Face Swap Service** — Python WS server on port 3002 using inswapper_128 + GFPGAN.
-4. **Frontend states** — Implement CONGELADO, LECTURA, GENERACION, REVELACION, ESPEJO_ACTIVO, SOUVENIR, CIERRE in the frontend.
-5. **Wire `stream_chunk` in frontend** — Display typing text per channel.
-6. **Wire `gen_preview` / `final_portrait` in frontend** — Show generation previews and final portrait.
-7. **Souvenir + mail service** — QR, mini-page, email sending.
 - **Behavior:** Presence uses a distance filter (min face width ratio); wave detection requires open-hand + oscillation; annotated JPEG frames are streamed over WebSocket; captures saved to `vision-service/captures/`.
 - **Multi-person selection ✅** — Implemented and tested. The closest person (largest face bounding box) is chosen as primary; only they count for presence; hands are filtered by proximity to the primary face. Face box drawn in blue with "PRIMARY" label.
 
