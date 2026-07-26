@@ -17,6 +17,7 @@
 - **Transparencia autoral:** el proyecto no quiere replicar la estructura de poder invisible que critica — de ahí que se muestre el razonamiento del modelo y la traducción en vez de esconderlos.
 - **El glitch como falla visible, no decoración:** cuando aparece, tiene que significar algo (el sistema reaccionando/rompiéndose ante un cuerpo real), no ser un filtro estético aplicado parejo.
 - **Política bilingüe:** el LLM piensa en español, genera el prompt de imagen en inglés (mejor adherencia con el text encoder), y traduce — las tres salidas se muestran. Esta misma política se refleja en el frontend: términos técnicos tienden a aparecer en inglés (fieles al prompt real), términos teóricos/poéticos tienen mayor presencia en español, y en general el español predomina porque el resto de la interfaz está en español.
+- **Unidad estética:** todos los elementos de interfaz (cajas de texto, bounding boxes, óvalos, HUD) comparten el mismo lenguaje visual: borde blanco de 1px con 3 ghosts RGB (rojo, verde, azul) en `position:absolute; inset:-1px` con glitch dinámico aleatorio. Tipografía única: `Consolas, "Courier New", monospace` en todos los tamaños, sin variantes bold ni fuentes externas.
 
 ---
 

@@ -67,17 +67,18 @@ espejo/
 │       │   ├── face-fragments.ts       # 50 floating 3D wireframe face parts
 │       │   ├── face-assembly.ts        # Pairs converging from opposite sides (LECTURA)
 │       │   ├── face-tracker.ts         # Face box with mock mode
-│       │   ├── analysis-hud.ts         # Polaroid photo with RGB glitch + scanner (LECTURA)
-│       │   ├── lectura-reveal.ts       # White circle shrink shader (CONGELADO→LECTURA)
+│       │   ├── analysis-hud.ts         # Polaroid photo with full RGB ghost border + scanner (LECTURA)
+│       │   ├── lectura-reveal.ts       # DOM white overlay opacity fade (CONGELADO→LECTURA)
 │       │   ├── lectura-text.ts         # Typing messages below photo (removed from flow)
-│       │   ├── lectura-thinking.ts     # Black console box with spinner + description
+│       │   ├── lectura-thinking.ts     # Black box (slide-down, RGB ghosts, spinner, elapsed [Xs] timer)
+│       │   ├── prompt-box.ts           # Black box with PROMPT_ES, quoted text, note, RGB ghosts
 │       │   ├── text-fragments.ts       # 150 floating word sprites (5 depths)
 │       │   └── debug-text.ts           # Debug overlay
 │       ├── shaders/
 │       │   ├── noise-field.frag        # Voronoi/fBm noise with palette + UI
 │       │   └── noise-field.vert
 │       └── tools/
-│           └── extract-face-parts.cjs  # Extracted 13 face parts from head2.glb
+│           └── extract-face-parts.cjs  # Extracted 15 face parts from head2.glb (added panda-eye masks)
 │
 └── index.html                          # Temp frontend (direct WS to vision service)
 ```
@@ -100,10 +101,27 @@ espejo/
 | **Structured WS events** | ✅ Working | JSON `presence`/`gesture_detected`/`photo_ready` events alongside binary frames |
 | **Models** | ✅ Downloaded | MediaPipe models in `vision-service/models/` (face + hand) |
 | **Orchestrator** (Node.js) | ✅ Initialized | `package.json`, index.js, stateMachine, session, services present |
-| **Frontend — REPOSO state** | ✅ Working | Vite + Three.js + TypeScript. Full-screen Voronoi noise shader, 50 floating 3D wireframe face parts, 150+ word sprites, code-typing snippets, particles, constellation lines. Camera DOM overlay with radial reveal, oval face area. Typing dialog with auto-advance, mid-text pauses (`||`), wave trigger on last text. Encuadre phase with oval guide, face tracking oval, alignment detection, bright overlay with cutout, 3-2-1 countdown, flash + capture. |
-| **Frontend — LECTURA state** | ✅ Working | Circular white reveal (centered on photo), face-assembly wireframe pairs (15 pairs, opposite sides, fade-before-touch), polaroid photo with RGB glitch + scanner line, process-transparent thinking box with console spinner, structured description streaming. |
+| **Frontend — REPOSO state** | ✅ Working | Vite + Three.js + TypeScript. Full-screen Voronoi noise shader, 50 floating 3D wireframe face parts, 150+ word sprites, code-typing snippets, particles, constellation lines. Camera DOM overlay with radial reveal, oval face area. Typing dialog with auto-advance, mid-text pauses (`||`), wave trigger on last text. Encuadre phase with oval guide, face tracking oval with RGB ghosts, alignment detection, bright overlay with cutout, 3-2-1 countdown, flash + capture. |
+| **Frontend — LECTURA state** | ✅ Working | DOM white opacity fade reveal, face-assembly wireframe pairs, polaroid photo with full RGB ghost border + scanner line, process-transparent thinking box (slide-down, RGB ghosts, spinner with elapsed [Xs] timer), structured description streaming, prompt box with PROMPT_ES text (quoted, Consolas, RGB ghosts). |
 | **Ollama streaming** | ✅ Working | `ollama.js` streams `thinking_es` + `descripcion` + `prompt_en` + `prompt_es` channels. System prompt in Spanish. Model outputs structured description with `*` bullets. |
 | **Photo capture (PNG)** | ✅ Working | `capture.py` saves lossless PNG at 1440×2560, base64 via WebSocket. JPEG quality removed in favor of PNG. |
+
+### UI/UX Improvements (Latest Session)
+
+1. **Unified RGB Ghost Borders** — All UI boxes (face bounding box, encuadre oval, photo HUD, dialog, thinking box, prompt box) now use the same border style: `1px` white border with 3 RGB ghosts using `position:absolute; inset:-1px` inside a `position:relative` container. Dynamic glitch animation (random offset every 0.06-0.16s with smooth recovery).
+2. **Consolas Font Consistency** — Replaced all `bold` and mixed fonts with regular `Consolas, "Courier New", monospace`. Removed `Pixelify Sans` (countdown now uses `bold 320px Consolas`). Removed `Source Code Pro` from text-fragments. Deleted Google Fonts import from HTML.
+3. **Prompt Box** — New module `prompt-box.ts`: black box with `> PROMPT (ES)` title, quoted text in Consolas 14px, separator, note about EN translation. Slides down after description closes.
+4. **Dialog Box Restyle** — Dialog text now inside a black box (same border/ghost style) instead of raw text. Hint text inside the box with separator line. Green flash on wave detection.
+5. **Thinking Box Restyle** — Replaced grow-from-bottom with slide-down animation matching prompt box. Elapsed timer `[Xs]` shown during generation. Status changed from `lista` to `Descripción finalizada correctamente`.
+6. **Extracted Panda Eye Masks** — `left-eye-panda.glb` / `right-eye-panda.glb` (3611 tris each) with wider vertical coverage for blink animation.
+7. **Fixed Eye Models** — User-edited `left-eye-fixed.glb` / `right-eye-fixed.glb` in Blender. Floating eyes module created but later removed (user decided against).
+8. **Vertex-level Blink** — Eyelid vertices move toward center Y of eye cavity instead of scale-Y squish. Smoothstep falloff. Bug fixed: `open` state was setting `sp=1` (closed) instead of `sp=0`.
+
+### Pending
+
+- **ComfyUI bridge** — Not started
+- **Face swap service** — Not started
+- **Frontend states beyond GENERACION** (REVELACION, ESPEJO_ACTIVO, SOUVENIR, CIERRE) — Not implemented
 
 ### Key Fixes Applied
 
