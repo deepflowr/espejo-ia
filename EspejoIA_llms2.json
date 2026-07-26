@@ -1,0 +1,483 @@
+{
+  "2": {
+    "inputs": {
+      "vae_name": "diffusion_pytorch_model.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": [
+        "62",
+        0
+      ],
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Posirive Prompt"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Negative Prompt"
+    }
+  },
+  "7": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "8": {
+    "inputs": {
+      "select_decoder": "default",
+      "pixel_shift_down_right": false,
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "58",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "VAEDecodePlusPlus",
+    "_meta": {
+      "title": "VAE Decode PLUSPLUS"
+    }
+  },
+  "9": {
+    "inputs": {
+      "enabled": true,
+      "clean_gpu": true,
+      "clean_cpu": true,
+      "unload_models": 3,
+      "anything": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "RAMCleanup",
+    "_meta": {
+      "title": "🧹 RAM Cleanup"
+    }
+  },
+  "10": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "11": {
+    "inputs": {
+      "image": "capture_20260725_234215_971107.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "18": {
+    "inputs": {
+      "name": "Z-Image-Turbo-Fun-Controlnet-Union.safetensors"
+    },
+    "class_type": "ModelPatchLoader",
+    "_meta": {
+      "title": "ModelPatchLoader"
+    }
+  },
+  "19": {
+    "inputs": {
+      "strength": 0.9,
+      "model": [
+        "53",
+        0
+      ],
+      "model_patch": [
+        "18",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ],
+      "image": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "QwenImageDiffsynthControlnet",
+    "_meta": {
+      "title": "QwenImageDiffsynthControlnet"
+    }
+  },
+  "22": {
+    "inputs": {
+      "images": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "49": {
+    "inputs": {
+      "preprocessor": "LineartStandardPreprocessor",
+      "resolution": 512,
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "AIO_Preprocessor",
+    "_meta": {
+      "title": "AIO Aux Preprocessor"
+    }
+  },
+  "53": {
+    "inputs": {
+      "unet_name": "z_image_turbo_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "55": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "A",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_rzpxc_00009_.png&type=temp&subfolder=&rand=0.4365252627384457"
+          },
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_rzpxc_00010_.png&type=temp&subfolder=&rand=0.8888351053674005"
+          }
+        ]
+      },
+      "image_a": [
+        "11",
+        0
+      ],
+      "image_b": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image Comparer (rgthree)"
+    }
+  },
+  "56": {
+    "inputs": {
+      "filename_prefix": "Canny",
+      "images": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "57": {
+    "inputs": {
+      "images": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "58": {
+    "inputs": {
+      "seed": 765288386890786,
+      "steps": 12,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "noise_mode": "GPU(=A1111)",
+      "interval": 1,
+      "omit_start_latent": true,
+      "omit_final_latent": true,
+      "model": [
+        "19",
+        0
+      ],
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "latent_image": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "KSamplerProgress //Inspire",
+    "_meta": {
+      "title": "KSampler Progress (Inspire)"
+    }
+  },
+  "59": {
+    "inputs": {
+      "select_decoder": "default",
+      "pixel_shift_down_right": false,
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "58",
+        1
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "VAEDecodePlusPlus",
+    "_meta": {
+      "title": "VAE Decode PLUSPLUS"
+    }
+  },
+  "60": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "61": {
+    "inputs": {
+      "enabled": true,
+      "clean_gpu": true,
+      "clean_cpu": true,
+      "unload_models": 3,
+      "anything": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "RAMCleanup",
+    "_meta": {
+      "title": "🧹 RAM Cleanup"
+    }
+  },
+  "62": {
+    "inputs": {
+      "system_prompt": [
+        "63",
+        0
+      ],
+      "user_prompt": "Write a DETAILED prompt in English for Z-Image Turbo image generation based on the description above. Must describe:\n- Gender, ethnicity, exact age range\n- Face shape, jawline, cheekbones\n- Eyes, eyebrows, eyelashes\n- Nose shape and profile\n- Lips thickness and shape\n- Skin texture, imperfections, wrinkles\n- Hair color, style, texture\n- Facial expression and mood\n- Lighting, framing, background\n- Visible clothing and accessories\n\nBe precise and descriptive. Minimum 100 words.",
+      "model_path": "C:\\ComfyUI\\ComfyUI-Easy-Install\\ComfyUI\\models\\LLM\\Qwen3-VL-8B-Instruct-abliterated-v2.0.Q5_K_M.gguf",
+      "mmproj_path": "C:\\ComfyUI\\ComfyUI-Easy-Install\\ComfyUI\\models\\LLM\\Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-f16.gguf",
+      "output_max_tokens": 1024,
+      "image_max_tokens": 4096,
+      "ctx": 8192,
+      "n_batch": 512,
+      "gpu_layers": -1,
+      "temperature": 0.1,
+      "seed": 806,
+      "unload_all_models": false,
+      "top_p": 0.92,
+      "repeat_penalty": 1.2,
+      "top_k": 0,
+      "pool_size": 4194304,
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "SimpleQwenVLgguf",
+    "_meta": {
+      "title": "Qwen-VL Vision Language Model"
+    }
+  },
+  "63": {
+    "inputs": {
+      "system_preset": "🖼️ Z-Image Turbo Prompt"
+    },
+    "class_type": "SimpleMasterPromptLoader",
+    "_meta": {
+      "title": "Master Prompt Loader"
+    }
+  },
+  "64": {
+    "inputs": {
+      "text_0": "adult woman, likely 30s–40s, Caucasian ethnicity. Square face shape with defined jawline and moderate cheekbones. Light brownish-gray eyes (hazel), medium-thick dark eyebrows slightly arched, natural eyelashes without mascara or false lashes. Straight nose bridge transitioning to a soft tip profile; no visible hump or bump. Lips are thin-medium thickness in neutral relaxed position — not smiling nor frowning. Skin texture appears smooth with faint freckles across cheeks and forehead, minimal fine lines around eyes (crow’s feet) and mouth corners suggesting natural aging without heavy makeup. Dark brown wavy shoulder-length hair framing face loosely; some strands slightly messy against skin. Neutral expression: calm gaze directed straight ahead, lips closed in a soft line — conveying quiet contemplation or mild seriousness. Soft diffused daylight illuminating front of face evenly with gentle shadows under jaw and nose for depth. Tight close-up portrait shot (85mm lens) cropped tightly to head/shoulders; plain off-white wall background blurred slightly behind her neck. Visible collar from a light gray button-down shirt, no visible accessories or jewelry. No nudity, no logos, no watermark, no text, safe for work — photorealistic style with high detail fidelity at 4K resolution.",
+      "text": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text 🐍"
+    }
+  },
+  "69": {
+    "inputs": {
+      "text_0": "mujer adulta, probablemente de los 30 a 40 años, etnia caucásica. Forma facial cuadrada con mandíbula definida y pómulos moderados. Ojos marrones claros-grisáceos (avellana), cejas oscuras de grosor medio-espeso ligeramente arqueadas, pestañas naturales sin máscara ni postizas. Puente nasal recto que se transita a un perfil suave en la punta; sin hump ni bulto visible. Labios de grosor delgado-medio en posición neutra relajada — ni sonriendo ni frunciendo el ceño. Textura de piel aparentemente lisa con pecas leves sobre mejillas y frente, líneas finas mínimas alrededor de los ojos (patas de cuervo) y comisuras de labios sugiriendo envejecimiento natural sin maquillaje pesado. Cabello castaño oscuro ondulado hasta los hombros que enmarca el rostro suavemente; algunos mechones ligeramente desordenados contra la piel. Expresión neutra: mirada tranquila dirigida directamente hacia adelante, labios cerrados en una línea suave — transmitiendo contemplación silenciosa o seriedad moderada. Luz diurna difusa y suave iluminando frontalmente el rostro de forma uniforme con sombras sutiles bajo mandíbula y nariz para profundidad. Fotografía retrato en primer plano ajustado (lente 85mm) recortada estrechamente a cabeza/hombros; fondo pared blanca apagada ligeramente desenfocada detrás de su cuello. Visible collar de una camisa de botones gris claro, sin accesorios ni joyas visibles. Sin desnudez, sin logos, sin marca de agua, sin texto, apto para trabajo — estilo fotorealista con alta fidelidad de detalle en resolución 4K.",
+      "text": [
+        "72",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text 🐍"
+    }
+  },
+  "72": {
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q5_K_M.gguf",
+      "prompt_text": [
+        "64",
+        0
+      ],
+      "preset_system_prompt": "📝 Enhance",
+      "custom_system_prompt": "Translate the prompt to Argentinian Spanish. Just the exact same text, don't include reasoning or details.",
+      "max_tokens": 1024,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "english_output": false,
+      "device": "auto",
+      "seed": 3965624619
+    },
+    "class_type": "AILab_QwenVL_GGUF_PromptEnhancer",
+    "_meta": {
+      "title": "QwenVL Prompt Enhancer (GGUF)"
+    }
+  },
+  "75": {
+    "inputs": {
+      "text_0": "* Género: femenino\n* Edad aproximada: ~35 años\n* Etnia: caucásica\n* Forma del rostro: cuadrada\n* Ojos: marrón claro grisáceo (avellana), forma ovalada, tamaño mediano, cejas oscuras de grosor medio con ligera arqueación natural, pestañas naturales sin maquillaje\n* Nariz: puente recto que se suaviza hacia la punta, perfil suave, sin hump ni bulto visible\n* Labios: grosor mediano delgado en posición relajada, no sonriendo ni frunciendo el ceño\n* Piel: tono claro con textura lisa, manchas de pecas discretas en mejillas y frente, líneas finas sutiles alrededor de ojos (arrugas de expresión) y comisuras de labios indicando envejecimiento natural sin maquillaje pesado\n* Maquillaje: no aplica maquillaje visible; base neutra, sombra y labial ausentes\n* Vello facial: no aplica vello facial ni bigote; cejas naturales con ligera arqueación\n* Cabello: marrón oscuro, ondulado, largo hasta los hombros, estilo suelto y despeinado en algunos mechones contra la piel\n* Expresión: expresión neutra, mirada calmada hacia adelante, labios cerrados en línea suave — transmite contemplación o seriedad moderada\n* Iluminación/Ambiente: luz difusa suave desde frente, ilumina uniformemente rostro con sombras sutiles bajo mandíbula y nariz para profundidad; fondo es una pared blanca desenfocada detrás del cuello\n* Ropa/Accessorios: visible parte de un camisa de botones gris claro, sin accesorios ni joyas visibles",
+      "text": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text 🐍"
+    }
+  },
+  "76": {
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q5_K_M.gguf",
+      "prompt_text": [
+        "64",
+        0
+      ],
+      "preset_system_prompt": "📝 Enhance",
+      "custom_system_prompt": "Usando este prompt como base, Genera una DESCRIPCIÓN ESTRUCTURADA en español de la persona en la foto. Solamente la lista de bullets, sin párrafos introductorios ni explicaciones. Cada línea debe empezar con un asterisco y un espacio, en este formato exacto:\n\n* Género: masculino/femenino\n* Edad aproximada: ej: ~30 años\n* Etnia: descripción\n* Forma del rostro: ovalada/redonda/corazón/cuadrada/alargada\n* Ojos: color, forma, tamaño, cejas\n* Nariz: forma, tamaño, perfil\n* Labios: grosor, forma\n* Piel: tono, textura, imperfecciones\n* Maquillaje: si aplica, tipo y colores (sombra, labial, base, etc.)\n* Vello facial: si aplica, barba/bigote/cejas tupidas, color, grosor\n* Cabello: color, largo, estilo, textura\n* Expresión: estado de ánimo, emoción\n* Iluminación/Ambiente: dirección de luz, temperatura, fondo\n* Ropa/Accessorios: visible en el retrato\n\nSé preciso y descriptivo. NO inventes nada que no esté. Solamente la lista de bullets, sin texto adicional antes ni después.",
+      "max_tokens": 1024,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "english_output": false,
+      "device": "auto",
+      "seed": 1336974964
+    },
+    "class_type": "AILab_QwenVL_GGUF_PromptEnhancer",
+    "_meta": {
+      "title": "QwenVL Prompt Enhancer (GGUF)"
+    }
+  },
+  "77": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "txt",
+      "text": [
+        "69",
+        0
+      ]
+    },
+    "class_type": "SaveText",
+    "_meta": {
+      "title": "Save Text"
+    }
+  },
+  "78": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "txt",
+      "text": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "SaveText",
+    "_meta": {
+      "title": "Save Text"
+    }
+  }
+}
