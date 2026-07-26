@@ -1350,11 +1350,13 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
 
   // descripcion: structured description (streamed, shown in box)
   if (ch === 'descripcion') {
-    if (streamPhase === 'descripcion' || streamPhase === 'thinking') {
-      if (streamPhase === 'thinking') {
+    if (streamPhase === 'idle' || streamPhase === 'descripcion' || streamPhase === 'thinking') {
+      if (streamPhase === 'idle' || streamPhase === 'thinking') {
         streamPhase = 'descripcion';
+        lecturaThinking.appendLine('enviando foto al modelo');
+        lecturaThinking.setStatus('generando descripción...');
       }
-      if (!done && delta) {
+      if (delta) {
         lecturaThinking.showDescription(delta);
         descriptionBuffer += delta;
       }

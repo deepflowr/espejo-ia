@@ -218,7 +218,7 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onComp
             }
           }
           if (nodeText) {
-            const channelMap = { '62': 'prompt_en', '72': 'prompt_es', '76': 'descripcion' };
+            const channelMap = { '69': 'prompt_es', '75': 'descripcion' };
             const channel = channelMap[node];
             if (channel && onStreamChunk) {
               console.log(`ComfyUI stream: ${channel} (${nodeText.length} chars)`);
