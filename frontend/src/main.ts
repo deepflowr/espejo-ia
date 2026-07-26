@@ -49,17 +49,21 @@ idleField.renderOrder = 0;
 scene.add(idleField);
 
 // ─── DOM-based corner brackets (guaranteed on top, any thickness) ─
+const boxContainer = document.createElement('div');
+boxContainer.id = 'face-box-container';
+boxContainer.style.cssText = 'position:fixed;pointer-events:none;z-index:999;display:none';
 const boxEl = document.createElement('div');
 boxEl.id = 'face-box';
-boxEl.style.cssText = 'position:fixed;pointer-events:none;z-index:999;border:1px solid rgba(255,255,255,0.35);border-radius:0;display:none;box-shadow:0 0 12px rgba(255,255,255,0.15),inset 0 0 12px rgba(255,255,255,0.05)';
-// RGB glitch ghosts for the bounding box
-const boxGhosts = ['#ff0000','#00ff00','#0000ff'].map((color, i) => {
-  const el = document.createElement('div');
-  el.style.cssText = `position:fixed;pointer-events:none;z-index:998;border:1px solid ${color};border-radius:0;display:none;opacity:0.25;mix-blend-mode:screen`;
-  document.body.appendChild(el);
-  return el;
+boxEl.style.cssText = 'position:relative;width:100%;height:100%;border:1px solid rgba(255,255,255,0.35);border-radius:0;box-shadow:0 0 12px rgba(255,255,255,0.15),inset 0 0 12px rgba(255,255,255,0.05)';
+boxContainer.appendChild(boxEl);
+// RGB glitch ghosts — absolute inside container (same as prompt box style)
+const boxGhosts = ['#ff0000','#00ff00','#0000ff'].map((color) => {
+  const g = document.createElement('div');
+  g.style.cssText = `position:absolute;top:-1px;left:-1px;right:-1px;bottom:-1px;border:1px solid ${color};pointer-events:none;opacity:0.25;mix-blend-mode:screen`;
+  boxContainer.appendChild(g);
+  return g;
 });
-document.body.appendChild(boxEl);
+document.body.appendChild(boxContainer);
 
 // ─── Camera feed as DOM overlay (viewport-aligned) ────────────
 let pendingFrame: HTMLImageElement | null = null;
@@ -823,10 +827,8 @@ function enterLectura() {
   statusEl.style.display = 'none';
   dialogEl.style.display = 'none';
   hintEl.style.display = 'none';
-  boxEl.style.display = 'none';
-  for (const g of boxGhosts) g.style.display = 'none';
-  for (const g of ovalGhosts) g.style.display = 'none';
-  faceOvalEl.style.display = 'none';
+  boxContainer.style.display = 'none';
+  ovalContainer.style.display = 'none';
   encuadreTextEl.style.display = 'none';
   camArrowEl.style.display = 'none';
   captureGuideEl.style.display = 'none';
@@ -935,7 +937,7 @@ function enterLectura() {
             clearInterval(descIv);
             lecturaThinking.stopSpinner();
             lecturaThinking.appendLine('descripción generada');
-            lecturaThinking.setStatus('lista');
+            lecturaThinking.setStatus('Descripción finalizada correctamente');
             lecturaThinking.descriptionDone(5000, () => {
               // After box closes, create floating description sprites
               createDescriptionSprites(demoDesc);
@@ -988,13 +990,58 @@ let statusTimer = 0;
 // ─── Typing dialog (below face box) ───────────────────────────
 const dialogEl = document.createElement('div');
 dialogEl.id = 'face-dialog';
-dialogEl.style.cssText = 'position:fixed;pointer-events:none;z-index:1000;font:26px Consolas,"Courier New",monospace;color:rgba(200,200,200,0.85);text-shadow:0 0 15px rgba(0,0,0,0.95);display:none;white-space:pre-wrap;max-width:600px;line-height:1.4';
+dialogEl.style.cssText = [
+  'position:fixed;pointer-events:none;z-index:1000;',
+  'display:none;',
+  'background:rgba(0,0,0,0.88);',
+  'border:1px solid rgba(255,255,255,0.12);',
+  'border-radius:0;',
+  'padding:16px 20px;',
+  'max-width:620px;',
+  'box-shadow:0 8px 30px rgba(0,0,0,0.5),0 0 12px rgba(255,255,255,0.06);',
+].join('');
 document.body.appendChild(dialogEl);
+// Dialog text
+const dialogContent = document.createElement('div');
+dialogContent.style.cssText = [
+  'font:22px Consolas,"Courier New",monospace;',
+  'color:rgba(210,220,240,0.85);',
+  'line-height:1.5;',
+  'white-space:pre-wrap;',
+  'text-shadow:0 0 8px rgba(0,0,0,0.9);',
+].join('');
+dialogEl.appendChild(dialogContent);
+// Hint inside dialog box (appears after text is done)
+const dialogHint = document.createElement('div');
+dialogHint.id = 'dialog-hint-inside';
+dialogHint.style.cssText = [
+  'display:none;',
+  'margin-top:12px;',
+  'padding-top:10px;',
+  'border-top:1px solid rgba(255,255,255,0.06);',
+  'font:13px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'color:rgba(140,160,190,0.5);',
+  'text-shadow:0 0 8px rgba(0,0,0,0.9);',
+].join('');
+dialogHint.textContent = '👋 saluda con la mano para continuar';
+dialogEl.appendChild(dialogHint);
+// RGB ghosts for dialog box
+const dialogGhosts: HTMLDivElement[] = ['#ff0000','#00ff00','#0000ff'].map(color => {
+  const g = document.createElement('div');
+  g.style.cssText = [
+    'position:absolute;top:-1px;left:-1px;right:-1px;bottom:-1px;',
+    'border:1px solid ' + color + ';',
+    'pointer-events:none;opacity:0.25;mix-blend-mode:screen;',
+  ].join('');
+  dialogEl.appendChild(g);
+  return g;
+});
 
 // ─── Hint text (below dialog, tells user to wave) ─────────────
 const hintEl = document.createElement('div');
 hintEl.id = 'dialog-hint';
-hintEl.style.cssText = 'position:fixed;pointer-events:none;z-index:1000;font:16px Consolas,"Courier New",monospace;color:rgba(180,180,180,0.6);text-shadow:0 0 8px rgba(0,0,0,0.9);display:none;white-space:nowrap';
+hintEl.style.cssText = 'position:fixed;pointer-events:none;z-index:1000;font:14px Consolas,"Courier New",monospace;font-style:italic;color:rgba(140,160,190,0.45);text-shadow:0 0 8px rgba(0,0,0,0.9);display:none;white-space:nowrap';
 document.body.appendChild(hintEl);
 let dialogAllShown = false;
 
@@ -1020,17 +1067,21 @@ ovalEl.style.cssText = 'position:fixed;pointer-events:none;z-index:998;border-ra
 document.body.appendChild(ovalEl);
 
 // ─── Face tracking oval (subtle, follows face) ────────────────
+const ovalContainer = document.createElement('div');
+ovalContainer.id = 'face-oval-container';
+ovalContainer.style.cssText = 'position:fixed;pointer-events:none;z-index:996;display:none';
 const faceOvalEl = document.createElement('div');
 faceOvalEl.id = 'face-oval';
-faceOvalEl.style.cssText = 'position:fixed;pointer-events:none;z-index:996;border:2px solid rgba(255,255,255,0.35);border-radius:50%;display:none;box-shadow:0 0 15px rgba(255,255,255,0.1)';
-document.body.appendChild(faceOvalEl);
-// RGB ghost ovals
+faceOvalEl.style.cssText = 'position:relative;width:100%;height:100%;border:1px solid rgba(255,255,255,0.35);border-radius:50%;box-shadow:0 0 15px rgba(255,255,255,0.1)';
+ovalContainer.appendChild(faceOvalEl);
+// RGB ghost ovals — absolute inside container like prompt box style
 const ovalGhosts: HTMLDivElement[] = ['#ff0000','#00ff00','#0000ff'].map(color => {
   const g = document.createElement('div');
-  g.style.cssText = 'position:fixed;pointer-events:none;z-index:995;border:1px solid ' + color + ';border-radius:50%;display:none;opacity:0.25;mix-blend-mode:screen';
-  document.body.appendChild(g);
+  g.style.cssText = 'position:absolute;top:-1px;left:-1px;right:-1px;bottom:-1px;border:1px solid ' + color + ';border-radius:50%;pointer-events:none;opacity:0.25;mix-blend-mode:screen';
+  ovalContainer.appendChild(g);
   return g;
 });
+document.body.appendChild(ovalContainer);
 
 // ─── Capture square guide (soft dashed, marks generation crop) ─
 const captureGuideEl = document.createElement('div');
@@ -1090,23 +1141,16 @@ function enterEncuadre() {
   // Animate the face box to centered oval guide
   boxEl.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
   boxEl.style.borderRadius = '50%';
-  boxEl.style.border = '2px solid rgba(255,255,255,0.7)';
-  boxEl.style.boxShadow = '0 0 30px rgba(255,255,255,0.15), inset 0 0 30px rgba(255,255,255,0.05)';
-  boxEl.style.left = targetX + 'px';
-  boxEl.style.top = targetY + 'px';
-  boxEl.style.width = ovalW + 'px';
-  boxEl.style.height = ovalH + 'px';
-  // RGB ghosts also animate to oval with offsets
-  for (let i = 0; i < 3; i++) {
-    const g = boxGhosts[i];
-    const offsets = [[-3, 0], [1.5, 1], [1, -1.5]];
-    g.style.display = 'block';
+  boxEl.style.border = '1px solid rgba(255,255,255,0.35)';
+  boxEl.style.boxShadow = '0 0 30px rgba(255,255,255,0.1), inset 0 0 30px rgba(255,255,255,0.03)';
+  boxContainer.style.left = targetX + 'px';
+  boxContainer.style.top = targetY + 'px';
+  boxContainer.style.width = ovalW + 'px';
+  boxContainer.style.height = ovalH + 'px';
+  // Ghosts follow automatically (absolute inside container)
+  for (const g of boxGhosts) {
     g.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
     g.style.borderRadius = '50%';
-    g.style.left = (targetX + offsets[i][0]) + 'px';
-    g.style.top = (targetY + offsets[i][1]) + 'px';
-    g.style.width = ovalW + 'px';
-    g.style.height = ovalH + 'px';
   }
   // After animation: show backdrop, instruction, enable face oval tracking
   setTimeout(() => {
@@ -1201,10 +1245,8 @@ wsClient.onMessage = (data) => {
       encuadreActive = false;
       dialogEl.style.display = 'none';
       hintEl.style.display = 'none';
-      boxEl.style.display = 'none';
-      for (const g of boxGhosts) g.style.display = 'none';
-      for (const g of ovalGhosts) g.style.display = 'none';
-      faceOvalEl.style.display = 'none';
+      boxContainer.style.display = 'none';
+      ovalContainer.style.display = 'none';
       encuadreTextEl.style.display = 'none';
       camArrowEl.style.display = 'none';
       captureGuideEl.style.display = 'none';
@@ -1281,7 +1323,7 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
         streamPhase = 'done';
         lecturaThinking.stopSpinner();
         lecturaThinking.appendLine('descripción generada');
-        lecturaThinking.setStatus('lista');
+        lecturaThinking.setStatus('Descripción finalizada correctamente');
         // Store full description for floating sprites
         storedDescription = descriptionBuffer;
         // Keep open 6s so person can read, then close
@@ -1733,22 +1775,13 @@ function animate() {
     const boxH = sh * vh * 2;
     const boxX = mx * vw - boxW / 2;
     const boxY = p.y * vh - boxH / 2;
-    boxEl.style.display = 'block';
-    boxEl.style.left = boxX + 'px';
-    boxEl.style.top = boxY + 'px';
-    boxEl.style.width = boxW + 'px';
-    boxEl.style.height = boxH + 'px';
-    // RGB glitch ghosts — dynamic random offset
-    for (let i = 0; i < 3; i++) {
-      const g = boxGhosts[i];
-      g.style.display = 'block';
-      g.style.left = boxX + 'px';
-      g.style.top = boxY + 'px';
-      g.style.width = boxW + 'px';
-      g.style.height = boxH + 'px';
-    }
+    boxContainer.style.display = 'block';
+    boxContainer.style.left = boxX + 'px';
+    boxContainer.style.top = boxY + 'px';
+    boxContainer.style.width = boxW + 'px';
+    boxContainer.style.height = boxH + 'px';
   } else if (!encuadreActive && appState !== 'lectura') {
-    boxEl.style.display = 'none';
+    boxContainer.style.display = 'none';
     for (const g of boxGhosts) g.style.display = 'none';
   }
 
@@ -1775,19 +1808,11 @@ function animate() {
     const mirroredFaceX = vw - faceX;
     const fOx = mirroredFaceX - faceOvalW / 2;
     const fOy = faceY - faceOvalH / 2 - faceOvalH * 0.13; // shift up 13%
-    faceOvalEl.style.display = 'block';
-    faceOvalEl.style.left = fOx + 'px';
-    faceOvalEl.style.top = fOy + 'px';
-    faceOvalEl.style.width = faceOvalW + 'px';
-    faceOvalEl.style.height = faceOvalH + 'px';
-    // Oval ghosts follow main oval
-    for (let i = 0; i < ovalGhosts.length; i++) {
-      ovalGhosts[i].style.display = 'block';
-      ovalGhosts[i].style.left = fOx + 'px';
-      ovalGhosts[i].style.top = fOy + 'px';
-      ovalGhosts[i].style.width = faceOvalW + 'px';
-      ovalGhosts[i].style.height = faceOvalH + 'px';
-    }
+    ovalContainer.style.display = 'block';
+    ovalContainer.style.left = fOx + 'px';
+    ovalContainer.style.top = fOy + 'px';
+    ovalContainer.style.width = faceOvalW + 'px';
+    ovalContainer.style.height = faceOvalH + 'px';
 
     if (encuadrePhase === 'position') {
       // Restore camera instruction text
@@ -1913,8 +1938,7 @@ function animate() {
       }
     }
   } else if (!encuadreActive) {
-    faceOvalEl.style.display = 'none';
-    for (const g of ovalGhosts) g.style.display = 'none';
+    ovalContainer.style.display = 'none';
     captureGuideEl.style.display = 'none';
   }
 
@@ -1950,42 +1974,20 @@ function animate() {
 
     // Hint: only show after all dialogs are done (last text fully displayed)
     if (dialogAllShown) {
-      const approxCharsPerLine = 36;
-      const approxLines = Math.max(1, Math.ceil((dialogCleanText.length || dialogFullText.length) / approxCharsPerLine));
-      const dialogTextHeight = approxLines * 26 * 1.4;
-      hintEl.style.display = 'block';
-      hintEl.style.left = dialogX + 'px';
-      hintEl.style.top = (dialogY + dialogTextHeight + 8) + 'px';
-      // Hand-wave icon as inline SVG (created once)
-      if (!hintEl.querySelector('svg')) {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('viewBox', '0 0 256 256');
-        svg.setAttribute('width', '20');
-        svg.setAttribute('height', '20');
-        svg.style.cssText = 'vertical-align:middle;margin-right:6px;opacity:0.7;fill:currentColor';
-        svg.innerHTML = '<path d="M220.17,100,202.86,70a28,28,0,0,0-38.24-10.25,27.69,27.69,0,0,0-9,8.34L138.2,38a28,28,0,0,0-48.48,0A28,28,0,0,0,48.15,74l1.59,2.76A27.67,27.67,0,0,0,38,80.41a28,28,0,0,0-10.24,38.25l40,69.32a87.47,87.47,0,0,0,53.43,41,88.56,88.56,0,0,0,22.92,3,88,88,0,0,0,76.06-132Zm-6.66,62.64A72,72,0,0,1,81.62,180l-40-69.32a12,12,0,0,1,20.78-12L81.63,132a8,8,0,1,0,13.85-8L62,66A12,12,0,1,1,82.78,54L114,108a8,8,0,1,0,13.85-8L103.57,58h0a12,12,0,1,1,20.78-12l33.42,57.9a48,48,0,0,0-5.54,60.6,8,8,0,0,0,13.24-9A32,32,0,0,1,172.78,112a8,8,0,0,0,2.13-10.4L168.23,90A12,12,0,1,1,189,78l17.31,30A71.56,71.56,0,0,1,213.51,162.62ZM184.25,31.71A8,8,0,0,1,194,26a59.62,59.62,0,0,1,36.53,28l.33.57a8,8,0,1,1-13.85,8l-.33-.57a43.67,43.67,0,0,0-26.8-20.5A8,8,0,0,1,184.25,31.71ZM80.89,237a8,8,0,0,1-11.23,1.33A119.56,119.56,0,0,1,40.06,204a8,8,0,0,1,13.86-8,103.67,103.67,0,0,0,25.64,29.72A8,8,0,0,1,80.89,237Z"/>';
-        hintEl.appendChild(svg);
-        hintEl.appendChild(document.createTextNode(''));
-      }
+      dialogHint.style.display = 'block';
       // Flash "saludo detectado" in green when wave is received
       hintFlashTimer = Math.max(0, hintFlashTimer - dt);
-      const svg = hintEl.querySelector('svg');
       if (hintFlashTimer > 0) {
-        hintEl.style.color = '#4ade80';
-        hintEl.style.textShadow = '0 0 12px rgba(74,222,128,0.4)';
-        if (svg) svg.style.opacity = '1';
-        if (hintEl.childNodes[1]) hintEl.childNodes[1].textContent = ' saludo detectado';
+        dialogHint.textContent = '✓ saludo detectado';
+        dialogHint.style.color = '#4ade80';
+        dialogHint.style.borderTopColor = 'rgba(74,222,128,0.2)';
       } else {
-        hintEl.style.color = 'rgba(180,180,180,0.6)';
-        hintEl.style.textShadow = '0 0 8px rgba(0,0,0,0.9)';
-        if (svg) svg.style.opacity = '0.7';
-        if (hintEl.childNodes[1]) {
-          hintEl.childNodes[1].textContent = ' saluda con la mano para continuar';
-        }
+        dialogHint.textContent = '👋 saluda con la mano para continuar';
+        dialogHint.style.color = 'rgba(140,160,190,0.5)';
+        dialogHint.style.borderTopColor = 'rgba(255,255,255,0.06)';
       }
     } else {
-      hintEl.style.display = 'none';
+      dialogHint.style.display = 'none';
     }
 
     // Typing effect — wave to advance, || for mid-text pause
@@ -2078,7 +2080,7 @@ function animate() {
     // Display: strip || and |N| markers from visible text
     const rawDisplay = dialogFullText.slice(0, Math.floor(dialogVisibleChars));
     const cleanDisplay = rawDisplay.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
-    dialogEl.textContent = cleanDisplay + (dialogVisibleChars < dialogFullText.length ? '▊' : '');
+    dialogContent.textContent = cleanDisplay + (dialogVisibleChars < dialogFullText.length ? '▊' : '');
   } else {
     dialogActive = false;
     dialogAllShown = false;
@@ -2134,6 +2136,31 @@ function animate() {
       ovalGhosts[i].style.transform = 'translate(' + nx.toFixed(2) + 'px, ' + ny.toFixed(2) + 'px)';
     }
     boxGlitchTimer = 0.06 + Math.random() * 0.1;
+  }
+
+  // ── Dialog box ghost glitch ──
+  if (dialogEl.style.display !== 'none') {
+    for (let i = 0; i < dialogGhosts.length; i++) {
+      const cur = dialogGhosts[i].style.transform || '';
+      if (Math.random() < 0.02) {
+        const ox = (Math.random() - 0.5) * 2;
+        const oy = (Math.random() - 0.5) * 2;
+        dialogGhosts[i].style.transform = 'translate(' + ox.toFixed(2) + 'px, ' + oy.toFixed(2) + 'px)';
+        dialogGhosts[i].style.opacity = String(0.15 + Math.random() * 0.15);
+      } else if (cur) {
+        const m = cur.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+        if (m) {
+          const x = parseFloat(m[1]), y = parseFloat(m[2]);
+          const nx = x + (0 - x) * 0.08;
+          const ny = y + (0 - y) * 0.08;
+          if (Math.abs(nx) < 0.1 && Math.abs(ny) < 0.1) {
+            dialogGhosts[i].style.transform = 'translate(0px, 0px)';
+          } else {
+            dialogGhosts[i].style.transform = 'translate(' + nx.toFixed(2) + 'px, ' + ny.toFixed(2) + 'px)';
+          }
+        }
+      }
+    }
   }
 
   renderer.render(scene, camera);

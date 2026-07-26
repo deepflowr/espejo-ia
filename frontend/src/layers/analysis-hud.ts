@@ -55,30 +55,22 @@ export async function createAnalysisHUD(): Promise<{
   `;
   polaroid.appendChild(imgEl);
 
-  // ─── RGB glitch bounding box corners ────────────────────────
-  // Red, Green, Blue offset ghost corners at different offsets
+  // ─── RGB glitch full borders (matches prompt box style) ──────
   const rgbColors = ['#ff0000', '#00ff00', '#0000ff'];
-  const rgbOffsets = [[-3, 0], [1.5, 1.5], [1, -2]];
+  const rgbGhosts: HTMLDivElement[] = [];
 
   for (let c = 0; c < 3; c++) {
     const ghost = document.createElement('div');
-    ghost.style.cssText = `
-      position: absolute;
-      inset: ${-2 + rgbOffsets[c][0]}px;
-      pointer-events: none;
-      z-index: ${601 + c};
-      opacity: 0;
-      transition: opacity 0.5s ease;
-    `;
-    // 4 corner L-shapes using borders
-    ghost.innerHTML = `
-      <div style="position:absolute;top:0;left:0;width:28px;height:28px;border-top:2.5px solid ${rgbColors[c]};border-left:2.5px solid ${rgbColors[c]};"></div>
-      <div style="position:absolute;top:0;right:0;width:28px;height:28px;border-top:2.5px solid ${rgbColors[c]};border-right:2.5px solid ${rgbColors[c]};"></div>
-      <div style="position:absolute;bottom:0;left:0;width:28px;height:28px;border-bottom:2.5px solid ${rgbColors[c]};border-left:2.5px solid ${rgbColors[c]};"></div>
-      <div style="position:absolute;bottom:0;right:0;width:28px;height:28px;border-bottom:2.5px solid ${rgbColors[c]};border-right:2.5px solid ${rgbColors[c]};"></div>
-    `;
+    ghost.style.cssText = [
+      'position: absolute; top: -2px; left: -2px; right: -2px; bottom: -2px;',
+      'border: 1px solid ' + rgbColors[c] + ';',
+      'pointer-events: none; z-index: ' + (601 + c) + ';',
+      'opacity: 0;',
+      'transition: opacity 0.5s ease;',
+    ].join('');
     (ghost as any)._rgbIdx = c;
     outer.appendChild(ghost);
+    rgbGhosts.push(ghost);
   }
 
   // ─── Scanner line with glow ─────────────────────────────────
@@ -115,7 +107,6 @@ export async function createAnalysisHUD(): Promise<{
   // ─── State ──────────────────────────────────────────────────
   let visible = false;
   let scanProgress = 0;
-  const rgbGhosts = Array.from(outer.children).filter(c => (c as any)._rgbIdx !== undefined) as HTMLElement[];
 
   // ─── Public API ─────────────────────────────────────────────
   function setPhoto(img: HTMLImageElement | HTMLCanvasElement) {
@@ -142,10 +133,29 @@ export async function createAnalysisHUD(): Promise<{
     // Container fade
     outer.style.opacity = String(op);
 
-    // RGB ghost corners — fade in with offset timing
+    // RGB ghosts — dynamic glitch (same as prompt/thinking boxes)
     for (let i = 0; i < rgbGhosts.length; i++) {
       const ghostOp = Math.min(1, Math.max(0, (scanProgress - i * 0.1) * 3));
       rgbGhosts[i].style.opacity = String(ghostOp * 0.6);
+      // Random offset glitch
+      const cur = rgbGhosts[i].style.transform || '';
+      if (Math.random() < 0.02) {
+        const ox = (Math.random() - 0.5) * 3;
+        const oy = (Math.random() - 0.5) * 3;
+        rgbGhosts[i].style.transform = 'translate(' + ox.toFixed(2) + 'px, ' + oy.toFixed(2) + 'px)';
+      } else if (cur) {
+        const m = cur.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+        if (m) {
+          const x = parseFloat(m[1]), y = parseFloat(m[2]);
+          const nx = x + (0 - x) * 0.08;
+          const ny = y + (0 - y) * 0.08;
+          if (Math.abs(nx) < 0.1 && Math.abs(ny) < 0.1) {
+            rgbGhosts[i].style.transform = 'translate(0px, 0px)';
+          } else {
+            rgbGhosts[i].style.transform = 'translate(' + nx.toFixed(2) + 'px, ' + ny.toFixed(2) + 'px)';
+          }
+        }
+      }
     }
 
     // Scanner line — sweeps down the photo area
@@ -161,13 +171,6 @@ export async function createAnalysisHUD(): Promise<{
     // Fade in, peak at middle, fade out at bottom
     const scanOp = Math.sin(progress * Math.PI) * 0.9;
     scanLine.style.opacity = String(Math.max(0, scanOp));
-
-    // Subtle pulsing glow on RGB ghosts
-    for (let i = 0; i < rgbGhosts.length; i++) {
-      const pulse = 0.7 + 0.3 * Math.sin(time * 0.5 + i * 2.1);
-      const current = parseFloat(rgbGhosts[i].style.opacity) || 0;
-      rgbGhosts[i].style.opacity = String(current * pulse);
-    }
   }
 
   function clear() {
