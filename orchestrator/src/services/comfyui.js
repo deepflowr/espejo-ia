@@ -188,6 +188,7 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onComp
     const ws = new WebSocket(wsUrl);
     await new Promise((resolve) => { ws.on('open', resolve); });
     let wsClosed = false;
+    const streamedChannels = new Set();
 
     // Now queue the prompt (WebSocket is ready to receive events)
     const promptId = await queuePrompt(workflow, clientId);
@@ -218,10 +219,11 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onComp
             }
           }
           if (nodeText) {
-            const channelMap = { '69': 'prompt_es', '75': 'descripcion' };
+            const channelMap = { '64': 'prompt_en', '69': 'prompt_es', '75': 'descripcion' };
             const channel = channelMap[node];
             if (channel && onStreamChunk) {
               console.log(`ComfyUI stream: ${channel} (${nodeText.length} chars)`);
+              streamedChannels.add(channel);
               onStreamChunk({ channel, text_delta: nodeText, done: true });
             }
           }
@@ -244,21 +246,17 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onComp
     ws.on('error', () => {});
     ws.on('close', () => { wsClosed = true; });
 
-    // Fallback: also poll history for texts if WebSocket missed them
-    // (fetchOutputs now returns { images, texts })
+    // Fallback: poll history for texts that WebSocket missed (e.g. if node events arrived before listener)
     const resultData = await fetchOutputs(promptId);
     if (resultData.images.length === 0) throw new Error('No output images from ComfyUI');
 
-    // Forward any text outputs from history that WebSocket didn't catch
-    if (resultData.texts) {
-      if (resultData.texts.descripcion && onStreamChunk) {
-        onStreamChunk({ channel: 'descripcion', text_delta: resultData.texts.descripcion, done: true });
-      }
-      if (resultData.texts.prompt_en && onStreamChunk) {
-        onStreamChunk({ channel: 'prompt_en', text_delta: resultData.texts.prompt_en, done: true });
-      }
-      if (resultData.texts.prompt_es && onStreamChunk) {
-        onStreamChunk({ channel: 'prompt_es', text_delta: resultData.texts.prompt_es, done: true });
+    // Forward only text outputs from history that WebSocket didn't already catch
+    const historyTexts = resultData.texts || {};
+    for (const [channel, text] of Object.entries(historyTexts)) {
+      if (!streamedChannels.has(channel) && text && onStreamChunk) {
+        console.log(`ComfyUI history fallback: ${channel} (${text.length} chars)`);
+        streamedChannels.add(channel);
+        onStreamChunk({ channel, text_delta: text, done: true });
       }
     }
 

@@ -329,7 +329,8 @@ Eventually should emit JSON:
 
 ### 🔍 Para Revisar
 
-- **Prompt se carga dos veces** — El prompt se envía/carga antes de que termine ComfyUI y otra vez cuando termina. Probablemente código viejo que quedó de la transición entre flujos (Ollama directo → ComfyUI). Revisar `orchestrator/src/index.js` y `orchestrator/src/services/comfyui.js` para ver si hay doble envío de `prompt_en` o duplicación de llamadas.
+- ~~**Prompt se carga dos veces**~~ ✅ **FIXED** — Era en `comfyui.js`: los textos de los nodos 69 (`prompt_es`) y 75 (`descripcion`) se enviaban por WebSocket (`executed` event) y después se reenviaban desde el history polling. Fix: se agregó un `Set(streamedChannels)` que trackea qué canales ya se enviaron por WebSocket, y el history fallback salta los que ya están. También se agregó el nodo 64 (`prompt_en`) al channelMap del WebSocket (antes solo venía por history).
+- **Evaluar si conviene usar dos workflows de ComfyUI en paralelo** — Probar si lanzar dos ejecuciones simultáneas del workflow (con diferentes semillas/configs) reduce la latencia total, aprovechando mejor la GPU. Si una termina antes, se usa esa. Hacer una rama de prueba (`experiment/dual-comfy`) para comparar tiempos.
 
 ---
 ## Recent Updates
@@ -497,7 +498,7 @@ Eventually should emit JSON:
 
 7. **Souvenir + mail service** — QR, mini-page, email sending.
 
-8. **🔍 Revisar: prompt se carga dos veces** — El prompt se envía antes de ComfyUI y otra vez al terminar. Posible código residual de la transición Ollama→ComfyUI.
+8. ✅ **Prompt duplicado — FIXED** — Era el history fallback en `comfyui.js` que reenviaba textos ya enviados por WebSocket.
 
 - **Behavior:** Presence uses a distance filter (min face width ratio); wave detection requires open-hand + oscillation; annotated JPEG frames are streamed over WebSocket; captures saved to `vision-service/captures/`.
 - **Multi-person selection ✅** — Implemented and tested. The closest person (largest face bounding box) is chosen as primary; only they count for presence; hands are filtered by proximity to the primary face. Face box drawn in blue with "PRIMARY" label.
