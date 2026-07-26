@@ -11,7 +11,7 @@ export function createLecturaThinking() {
   container.id = 'lectura-thinking';
   container.style.cssText = [
     'position: fixed;',
-    'top: calc(38% + min(55vh, 440px) / 2 + 50px);',
+    'top: calc(38% + min(55vh, 440px) / 2 + 120px);',
     'left: 50%;',
     'transform: translateX(-50%) translateY(-20px);',
     'width: min(85vw, 650px);',

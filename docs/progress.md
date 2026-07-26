@@ -111,11 +111,13 @@ espejo/
 1. **Unified RGB Ghost Borders** — All UI boxes (face bounding box, encuadre oval, photo HUD, dialog, thinking box, prompt box) now use the same border style: `1px` white border with 3 RGB ghosts using `position:absolute; inset:-1px` inside a `position:relative` container. Dynamic glitch animation (random offset every 0.06-0.16s with smooth recovery).
 2. **Consolas Font Consistency** — Replaced all `bold` and mixed fonts with regular `Consolas, "Courier New", monospace`. Removed `Pixelify Sans` (countdown now uses `bold 320px Consolas`). Removed `Source Code Pro` from text-fragments. Deleted Google Fonts import from HTML.
 3. **Prompt Box** — New module `prompt-box.ts`: black box with `> PROMPT (ES)` title, quoted text in Consolas 14px, separator, note about EN translation. Slides down after description closes.
-4. **Dialog Box Restyle** — Dialog text now inside a black box (same border/ghost style) instead of raw text. Hint text inside the box with separator line. Green flash on wave detection.
-5. **Thinking Box Restyle** — Replaced grow-from-bottom with slide-down animation matching prompt box. Elapsed timer `[Xs]` shown during generation. Status changed from `lista` to `Descripción finalizada correctamente`.
-6. **Extracted Panda Eye Masks** — `left-eye-panda.glb` / `right-eye-panda.glb` (3611 tris each) with wider vertical coverage for blink animation.
-7. **Fixed Eye Models** — User-edited `left-eye-fixed.glb` / `right-eye-fixed.glb` in Blender. Floating eyes module created but later removed (user decided against).
-8. **Vertex-level Blink** — Eyelid vertices move toward center Y of eye cavity instead of scale-Y squish. Smoothstep falloff. Bug fixed: `open` state was setting `sp=1` (closed) instead of `sp=0`.
+4. **Dialog Box Restyle** — Dialog text now inside a black box (same border/ghost style) with fade-in/out transitions between dialogs. Last dialog stays visible with hint inside box. Full text appears at once (no typing). Auto-advance 4-12s based on text length.
+5. **Thinking Box Restyle** — Replaced grow-from-bottom with slide-down animation matching prompt box. Elapsed timer `[Xs]` shown during generation. Status changed from `lista` to `Descripción finalizada correctamente`. Repositioned to match prompt box location.
+6. **Status/Hint Text Restyle** — `statusEl` and `hintEl` re-styled to match prompt box title: italic, uppercase, letter-spacing, `>` prefix, Consolas.
+7. **Encuadre Text Restyle** — Now uses same style: italic, uppercase, letter-spacing, white. Text: `> Colocá tu cara haciendo coincidir los óvalos` (single line).
+8. **Waiting Text Spinner** — Added `| / - \` ASCII spinner animation to `#lectura-waiting` box.
+9. **Waiting Text Flow Refined** — Text #2 now triggers when thinking box appears (not on chunk arrival). Demo fallback removed.
+10. **Extracted Panda Eye Masks** — `left-eye-panda.glb` / `right-eye-panda.glb` (3611 tris each) with wider vertical coverage for blink animation.
 
 ### Pending
 
@@ -392,7 +394,27 @@ Eventually should emit JSON:
   - Fixed built-in webcam landscape→portrait cropping in frontend drawImage.
 - **Ollama model:** Custom `espejo-vl` created from GGUF files at `C:\ComfyUI\ComfyUI-Easy-Install\ComfyUI\models\LLM\`. Uses `ADAPTER` for mmproj. ~6s latency for vision+generation.
 
-### 2026-07-23 — New webcam (Raptor Vision 4K) + camera mirror + UX tweaks + Gemma 4 with native thinking
+### 2026-07-25 — UI consistency pass: RGB ghosts, Consolas, dialog/descripción/prompt restyle
+- **Summary:** Major UI consistency pass. All black box borders unified with dynamic RGB ghosts, fonts standardized to Consolas, dialog restyled with fade-in/out per box, status/hint text re-styled to match prompt box title (italic, uppercase, `>` prefix), encuadre text moved to same style, thinking box repositioned to match prompt box location, waiting text now has ASCII spinner (`| / - \`), text flow simplified (full text at once, no typing/segment reveal). Demo fallback path removed.
+- **Modified:** `frontend/src/main.ts`, `frontend/src/layers/lectura-thinking.ts`
+- **RGB Ghosts unified:** All UI boxes (face bounding box, encuadre oval, photo HUD, dialog, thinking box, prompt box) now share same border style: `1px` white border + 3 RGB ghosts (`position:absolute; inset:-1px`) with dynamic glitch animation (random offset every 0.06-0.16s, smooth recovery).
+- **Font standardization:** `Consolas, "Courier New", monospace` everywhere. No bold. No Pixelify Sans. No Source Code Pro. Google Fonts import removed from HTML.
+- **Dialog system rewritten:**
+  - Full text appears at once (no typing chars, no segment reveal via `||`)
+  - Each dialog box fades out completely before next fades in (opacity transition)
+  - Last dialog stays visible, shows hint "saluda con la mano" inside box
+  - Position follows face bounding box (below it)
+  - Auto-advance timing based on text length (4-12s)
+- **Status/hint text:** `statusEl` and `hintEl` now use the same style as prompt box title: italic, uppercase, letter-spacing, `>` prefix, Consolas.
+- **Descripción (thinking) box:** Repositioned to `top: +120px` (same as prompt box, was `+50px`).
+- **Encuadre text:** Restyled to match status text (italic, uppercase, letter-spacing, white `#fff`), now reads `> Colocá tu cara haciendo coincidir los óvalos` with `white-space: nowrap`.
+- **Waiting text spinner:** Added `| / - \` ASCII spinner that updates in animation loop via `#waiting-spinner` element. Text #2 ("Describiendo...") now appears when thinking box is shown (not on chunk arrival).
+- **Text flow:**
+  1. "Esperando descripción del modelo tras el espejo..." (initial)
+  2. "Describiendo a la persona frente al espejo..." (when thinking box appears)
+  3. "Generando prompt para la imagen..." (after description done, box closes)
+  4. "Creando contornos de la cara..." (when prompt box is shown)
+- **Fixed:** Extra `}` syntax error that broke the dialog logic (caused "unexpected else").
 - **Summary:** Replaced the built-in webcam with the new Raptor Vision 4K webcam (CAMERA_INDEX=1, native 1440×2560 portrait). Implemented camera feed mirror (CSS `scaleX(-1)` on canvas + mirrored X for DOM elements). Added camera arrow indicator with "mirá la\ncámara" and "¡Sonreí!" text during encuadre. Replaced the Ollama model from custom `espejo-vl` (Qwen3-VL-8B, no thinking) to **Gemma 4 12B** (vision + native thinking via `think: true` parameter). System prompt now asks Gemma to reason in Spanish step by step. Thinking is accumulated and saved as `pensamiento_es`. Prompts are much more detailed with forced requirements (age range, face shape, eyes, nose, lips, skin texture, pores, scars, moles, piercings, tattoos, lighting, framing, etc.).
 - **Key fixes:**
   - Camera mirror: CSS `scaleX(-1)` on canvas + mirrored `p.x` for DOM overlays (box, oval, dialog text).

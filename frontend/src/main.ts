@@ -887,7 +887,16 @@ function enterLectura() {
     text-shadow: 0 0 12px rgba(0,0,0,0.95);
     box-sizing: border-box;
   `;
-  waitingEl.textContent = 'Esperando descripción del modelo tras el espejo...';
+  // Spinner + text structure
+  const waitingSpinner = document.createElement('span');
+  waitingSpinner.id = 'waiting-spinner';
+  waitingSpinner.style.cssText = 'display:inline-block;width:1.2em;text-align:right;margin-right:0.3em;';
+  waitingSpinner.textContent = '/';
+  const waitingText = document.createElement('span');
+  waitingText.id = 'waiting-text';
+  waitingText.textContent = 'Esperando descripción del modelo tras el espejo...';
+  waitingEl.appendChild(waitingSpinner);
+  waitingEl.appendChild(waitingText);
   document.body.appendChild(waitingEl);
 
 
@@ -896,6 +905,8 @@ function enterLectura() {
     if (appState === 'lectura') {
       lecturaThinking.show();
       lecturaThinking.startSpinner();
+      // Change waiting text when description box appears
+      waitingText.textContent = 'Describiendo a la persona frente al espejo...';
       // Flush any chunks that arrived before the box was ready
       if (pendingChunks.length > 0) {
         for (const pc of pendingChunks) {
@@ -922,9 +933,6 @@ function enterLectura() {
 
         lecturaThinking.appendLine('enviando foto al modelo');
         lecturaThinking.setStatus('generando descripción...');
-        // Update waiting text
-        const wt = document.getElementById('lectura-waiting');
-        if (wt) wt.textContent = 'Describiendo a la persona frente al espejo...';
 
         const descWords = demoDesc.split(' ');
         let di = 0;
@@ -941,12 +949,8 @@ function enterLectura() {
             lecturaThinking.descriptionDone(5000, () => {
               // After box closes, create floating description sprites
               createDescriptionSprites(demoDesc);
-              // Show next text
-              const post = document.getElementById('lectura-waiting');
-              if (post) {
-                post.textContent = 'Prompt listo para enviar al modelo de generación...';
-                post.style.display = 'block';
-              }
+              // Show next text (same as normal flow)
+              if (waitingText) waitingText.textContent = 'Generando prompt para la imagen...';
             });
           }
         }, 50);
@@ -982,7 +986,17 @@ function leaveLectura() {
 // ─── Status overlay (bottom of screen) ────────────────────────
 const statusEl = document.createElement('div');
 statusEl.id = 'detection-status';
-statusEl.style.cssText = 'position:fixed;bottom:30px;left:0;right:0;text-align:center;font:16px Consolas,"Courier New",monospace;color:rgba(180,180,180,0.7);pointer-events:none;z-index:100;text-shadow:0 0 8px rgba(0,0,0,0.8);transition:opacity 0.3s';
+statusEl.style.cssText = [
+  'position:fixed;bottom:30px;left:0;right:0;text-align:center;',
+  'font:14px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'text-transform:uppercase;',
+  'letter-spacing:1px;',
+  'color:rgba(140,160,190,0.55);',
+  'pointer-events:none;z-index:100;',
+  'text-shadow:0 0 8px rgba(0,0,0,0.8);',
+  'transition:opacity 0.3s',
+].join('');
 statusEl.textContent = '> Esperando alguien para reflejar...';
 document.body.appendChild(statusEl);
 let statusTimer = 0;
@@ -997,10 +1011,13 @@ dialogEl.style.cssText = [
   'border:1px solid rgba(255,255,255,0.12);',
   'border-radius:0;',
   'padding:16px 20px;',
-  'max-width:620px;',
+  'width: min(85vw, 620px);',
   'box-shadow:0 8px 30px rgba(0,0,0,0.5),0 0 12px rgba(255,255,255,0.06);',
+  'opacity:0;',
+  'transition:opacity 0.6s ease;',
 ].join('');
 document.body.appendChild(dialogEl);
+
 // Dialog text
 const dialogContent = document.createElement('div');
 dialogContent.style.cssText = [
@@ -1011,6 +1028,15 @@ dialogContent.style.cssText = [
   'text-shadow:0 0 8px rgba(0,0,0,0.9);',
 ].join('');
 dialogEl.appendChild(dialogContent);
+// Dialog content entrance animation
+const dialogAnimStyle = document.createElement('style');
+dialogAnimStyle.textContent = `
+@keyframes dialogContentIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+`;
+document.head.appendChild(dialogAnimStyle);
 // Hint inside dialog box (appears after text is done)
 const dialogHint = document.createElement('div');
 dialogHint.id = 'dialog-hint-inside';
@@ -1041,7 +1067,16 @@ const dialogGhosts: HTMLDivElement[] = ['#ff0000','#00ff00','#0000ff'].map(color
 // ─── Hint text (below dialog, tells user to wave) ─────────────
 const hintEl = document.createElement('div');
 hintEl.id = 'dialog-hint';
-hintEl.style.cssText = 'position:fixed;pointer-events:none;z-index:1000;font:14px Consolas,"Courier New",monospace;font-style:italic;color:rgba(140,160,190,0.45);text-shadow:0 0 8px rgba(0,0,0,0.9);display:none;white-space:nowrap';
+hintEl.style.cssText = [
+  'position:fixed;pointer-events:none;z-index:1000;',
+  'font:13px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'text-transform:uppercase;',
+  'letter-spacing:1px;',
+  'color:rgba(140,160,190,0.45);',
+  'text-shadow:0 0 8px rgba(0,0,0,0.9);',
+  'display:none;',
+].join('');
 document.body.appendChild(hintEl);
 let dialogAllShown = false;
 
@@ -1094,7 +1129,17 @@ let boxGlitchTimer = 0;
 
 const encuadreTextEl = document.createElement('div');
 encuadreTextEl.id = 'encuadre-text';
-encuadreTextEl.style.cssText = 'position:fixed;pointer-events:none;z-index:1000;font:22px Consolas,"Courier New",monospace;color:rgba(200,200,200,0.7);text-shadow:0 0 15px rgba(0,0,0,0.95);display:none;text-align:center;width:100%;left:0';
+encuadreTextEl.style.cssText = [
+  'position:fixed;pointer-events:none;z-index:1000;',
+  'font:20px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'text-transform:uppercase;',
+  'letter-spacing:2px;',
+  'color:rgba(230,235,245,0.9);',
+  'text-shadow:0 0 20px rgba(0,0,0,0.5), 0 0 4px rgba(0,0,0,0.8);',
+  'white-space:nowrap;',
+  'display:none;text-align:center;width:100%;left:0',
+].join('');
 document.body.appendChild(encuadreTextEl);
 
 // ─── Encuadre countdown (above oval) ──────────────────────────
@@ -1186,10 +1231,9 @@ function enterEncuadre() {
 let dialogActive = false;
 let dialogFullText = '';
 let dialogCleanText = '';
-let dialogVisibleChars = 0;
-let dialogSegPause = 0; // countdown between || segments
-let dialogCharSpeed = 0;
 let dialogWavePending = false;
+let waitingSpinnerTick = 0;
+let dialogFadeTimer = 0;
 let dialogCooldown = 0;
 let dialogIndex = 0;
 let hintFlashTimer = 0;
@@ -1297,9 +1341,6 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
       streamPhase = 'thinking';
       lecturaThinking.appendLine('enviando foto al modelo');
       lecturaThinking.setStatus('generando descripción...');
-      // Change waiting text to "describing" state
-      const wt = document.getElementById('lectura-waiting');
-      if (wt) wt.textContent = 'Describiendo a la persona frente al espejo...';
     }
     if (done && streamPhase === 'thinking') {
       streamPhase = 'descripcion';
@@ -1312,8 +1353,6 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
     if (streamPhase === 'descripcion' || streamPhase === 'thinking') {
       if (streamPhase === 'thinking') {
         streamPhase = 'descripcion';
-        const wt = document.getElementById('lectura-waiting');
-        if (wt) wt.textContent = 'Describiendo a la persona frente al espejo...';
       }
       if (!done && delta) {
         lecturaThinking.showDescription(delta);
@@ -1333,11 +1372,8 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
             createDescriptionSprites(storedDescription);
           }
           // Show next text
-          const post = document.getElementById('lectura-waiting');
-          if (post) {
-            post.textContent = 'Generando prompt para la imagen...';
-            post.style.display = 'block';
-          }
+          const wtEl = document.getElementById('waiting-text');
+          if (wtEl) wtEl.textContent = 'Generando prompt para la imagen...';
         });
       }
     }
@@ -1354,6 +1390,7 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
         if (storedPromptES) {
           promptBox.show(storedPromptES);
         }
+        const wt3 = document.getElementById('waiting-text'); if (wt3) wt3.textContent = 'Creando contornos de la cara...';
       }, 3000);
     }
     return;
@@ -1819,7 +1856,7 @@ function animate() {
       camArrowEl.innerHTML = '<span style="font-size:32px">◀</span> <span style="font-size:26px">mirá la<br><span style="padding-left:30px">cámara</span></span>';
       camArrowEl.style.display = 'none';
       encuadreTextEl.style.display = 'block';
-      const targetText = '> colocá tu cara acá';
+      const targetText = '> Colocá tu cara haciendo coincidir los óvalos';
       if (encuadreTypingText !== targetText) {
         encuadreTypingText = targetText;
         encuadreTypingChars = 0;
@@ -1827,7 +1864,7 @@ function animate() {
       if (encuadreTypingChars < targetText.length) {
         encuadreTypingChars = Math.min(targetText.length, encuadreTypingChars + dt * 60);
       }
-      encuadreTextEl.style.color = 'rgba(200,200,200,0.7)';
+      encuadreTextEl.style.color = 'rgba(230,235,245,0.9)';
       encuadreTextEl.textContent = targetText.slice(0, Math.floor(encuadreTypingChars)) + (encuadreTypingChars < targetText.length ? '▊' : '');
       // Check if aligned (position + size)
       if (dist < alignThreshold && sizeOk) {
@@ -1875,7 +1912,7 @@ function animate() {
         brightEl.style.webkitMaskImage = '';
         const backdrop2 = document.getElementById('encuadre-backdrop');
         if (backdrop2) backdrop2.style.display = 'block';
-        encuadreTextEl.style.color = 'rgba(200,200,200,0.7)';
+        encuadreTextEl.style.color = 'rgba(230,235,245,0.9)';
         encuadreAlignedTimer = 0;
       } else {
         encuadreAlignedTimer += dt;
@@ -1904,7 +1941,7 @@ function animate() {
         const backdrop2 = document.getElementById('encuadre-backdrop');
         if (backdrop2) backdrop2.style.display = 'block';
         countdownEl.style.display = 'none';
-        encuadreTextEl.style.color = 'rgba(200,200,200,0.7)';
+        encuadreTextEl.style.color = 'rgba(230,235,245,0.9)';
         encuadreAlignedTimer = 0;
       } else if (encuadreCountdownValue <= 0 && !encuadreCapturing) {
         // Capture!
@@ -1930,7 +1967,7 @@ function animate() {
         brightEl.style.webkitMaskImage = '';
         const backdrop2 = document.getElementById('encuadre-backdrop');
         if (backdrop2) backdrop2.style.display = 'block';
-        encuadreTextEl.style.color = 'rgba(200,200,200,0.7)';
+        encuadreTextEl.style.color = 'rgba(230,235,245,0.9)';
         encuadreAlignedTimer = 0;
       } else {
         countdownEl.style.display = 'block';
@@ -1942,40 +1979,41 @@ function animate() {
     captureGuideEl.style.display = 'none';
   }
 
-  // ── Typing dialog (below face box) ──
+  // ── Dialog (follows face, each box fades out before next fades in) ──
   if (hasFace && !encuadreActive && appState !== 'lectura') {
     if (!dialogActive) {
       dialogActive = true;
       dialogIndex = 0;
       dialogAllShown = false;
       dialogFullText = DIALOGS[0];
-      dialogCleanText = dialogFullText.replace(/\|\|/g, '');
-      dialogVisibleChars = 0;
-      dialogSegPause = 0;
-      dialogCharSpeed = 1 + Math.random() * 1.5;
-      dialogCooldown = 0;
+      dialogCleanText = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
+      dialogAutoAdvanceSet = false;
+      dialogFadeTimer = 0;
+      // Show first dialog with fade in
+      dialogContent.textContent = dialogCleanText;
+      dialogEl.style.display = 'block';
+      dialogEl.style.opacity = '0';
+      requestAnimationFrame(() => { dialogEl.style.opacity = '1'; });
     }
-    // Position below the face box
-    const s = faceTracker.smoothedSize;
-    const sh = faceTracker.smoothedHeight;
-    const boxW = s * vw * 2;
-    const boxH = sh * vh * 2;
-    const mx2 = 1 - p.x; // mirror X to match flipped display
-    const rawBoxX = mx2 * vw - boxW / 2;
-    const rawBoxY = p.y * vh - boxH / 2;
-
-    // Dialog position: below the box, clamped to stay on screen
-    let dialogX = Math.max(8, Math.min(vw - 600, rawBoxX));
+    // Position below the face box (follows bounding box)
+    const sD = faceTracker.smoothedSize;
+    const shD = faceTracker.smoothedHeight;
+    const vwD = window.innerWidth;
+    const vhD = window.innerHeight;
+    const boxW = sD * vwD * 2;
+    const boxH = shD * vhD * 2;
+    const mx2 = 1 - p.x;
+    const rawBoxX = mx2 * vwD - boxW / 2;
+    const rawBoxY = p.y * vhD - boxH / 2;
+    let dialogX = Math.max(8, Math.min(vwD - 600, rawBoxX));
     let dialogY = rawBoxY + boxH + 12;
-    if (dialogY + 120 > vh) dialogY = rawBoxY - 120; // flip above if not enough room below
-    dialogEl.style.display = 'block';
+    if (dialogY + 120 > vhD) dialogY = rawBoxY - 120;
     dialogEl.style.left = dialogX + 'px';
     dialogEl.style.top = dialogY + 'px';
 
-    // Hint: only show after all dialogs are done (last text fully displayed)
+    // Hint: only show after all dialogs are done
     if (dialogAllShown) {
       dialogHint.style.display = 'block';
-      // Flash "saludo detectado" in green when wave is received
       hintFlashTimer = Math.max(0, hintFlashTimer - dt);
       if (hintFlashTimer > 0) {
         dialogHint.textContent = '✓ saludo detectado';
@@ -1990,97 +2028,57 @@ function animate() {
       dialogHint.style.display = 'none';
     }
 
-    // Typing effect — wave to advance, || for mid-text pause
-    const cleanLen = dialogCleanText.length || dialogFullText.length;
-    if (dialogSegPause > 0) {
-      dialogSegPause -= dt;
-      if (dialogSegPause <= 0) {
-        dialogSegPause = 0;
-        // Skip past the pause marker in fullText
-        const afterPause = dialogFullText.slice(Math.floor(dialogVisibleChars));
-        const pauseSkip = afterPause.match(/^\|(?:\d+(?:\.\d+)?)?\|\|?/);
-        if (pauseSkip) {
-          dialogVisibleChars += pauseSkip[0].length;
-        }
+    if (dialogFadeTimer > 0) {
+      // Waiting for fade-out to complete, then advance
+      dialogFadeTimer -= dt;
+      if (dialogFadeTimer <= 0) {
+        dialogFadeTimer = 0;
+        dialogIndex++;
+        dialogFullText = DIALOGS[dialogIndex];
+        dialogCleanText = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
+        dialogContent.textContent = dialogCleanText;
+        dialogEl.style.opacity = '1'; // fade in new box
+        dialogAutoAdvanceSet = false;
       }
-    } else if (dialogVisibleChars < dialogFullText.length) {
-      if (dialogWavePending) {
-        dialogVisibleChars = dialogFullText.length;
-        dialogWavePending = false;
-        hintFlashTimer = 1.5;
-        dialogCooldown = 1.5;
-      } else {
-        dialogVisibleChars = Math.min(
-          dialogFullText.length,
-          dialogVisibleChars + dialogCharSpeed * dt * 6,
-        );
-        // Check if we just hit a || or |N| pause marker
-        const at = Math.floor(dialogVisibleChars);
-        const rest = dialogFullText.slice(at);
-        const pauseMatch = rest.match(/^\|(\d+(?:\.\d+)?)\|/);
-        if (pauseMatch) {
-          dialogVisibleChars = at; // freeze before marker
-          dialogSegPause = parseFloat(pauseMatch[1]);
-        } else if (rest.startsWith('||')) {
-          dialogVisibleChars = at;
-          dialogSegPause = 0.5;
-        }
+    } else if (!dialogAllShown) {
+      // Show current text
+      const cleanDisplay = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
+      if (dialogContent.textContent !== cleanDisplay) {
+        dialogContent.textContent = cleanDisplay;
       }
-    } else {
-      // Auto-advance from first texts with longer pauses
-      if (!dialogAutoAdvanceSet && dialogIndex <= 10) {
-        dialogAutoAdvanceSet = true;
-        dialogAutoTimer = 3.0;
-      }
-      // Last text fully displayed — reset any stale wave, show hint
-      if (!dialogAllShown && dialogIndex === DIALOGS.length - 1) {
-        dialogAllShown = true;
-        dialogWavePending = false;
-      }
+
       // Auto-advance timer
+      if (!dialogAutoAdvanceSet) {
+        dialogAutoAdvanceSet = true;
+        const textLen = cleanDisplay.length;
+        dialogAutoTimer = Math.max(4, Math.min(12, 4 + textLen / 30));
+      }
       if (dialogAutoTimer > 0) {
         dialogAutoTimer -= dt;
         if (dialogAutoTimer <= 0) {
           dialogAutoTimer = 0;
-          dialogCooldown = 0;
-          dialogIndex++;
-          if (dialogIndex >= DIALOGS.length) {
+          if (dialogIndex >= DIALOGS.length - 1) {
+            // Last dialog — keep box visible, switch to hint
             dialogAllShown = true;
-            enterEncuadre();
+            dialogWavePending = false;
           } else {
-            dialogFullText = DIALOGS[dialogIndex];
-            dialogCleanText = dialogFullText.replace(/\|\|/g, '');
-            dialogVisibleChars = 0;
-            dialogSegPause = 0;
-            dialogCharSpeed = 1 + Math.random() * 1.5;
-            dialogAutoAdvanceSet = false;
+            // Start fade-out for next dialog
+            dialogEl.style.opacity = '0';
+            dialogFadeTimer = 0.55;
           }
         }
       }
-      if (dialogCooldown > 0) {
-        dialogCooldown -= dt;
-      } else if (dialogWavePending) {
-        dialogWavePending = false;
-        hintFlashTimer = 1.5;
-        dialogCooldown = 0;
-        dialogIndex++;
-        if (dialogIndex >= DIALOGS.length) {
-          dialogAllShown = true;
-          enterEncuadre();
-        } else {
-          dialogFullText = DIALOGS[dialogIndex];
-          dialogCleanText = dialogFullText.replace(/\|\|/g, '');
-          dialogVisibleChars = 0;
-          dialogSegPause = 0;
-          dialogCharSpeed = 1 + Math.random() * 1.5;
-          dialogAutoAdvanceSet = false;
-        }
-      }
     }
-    // Display: strip || and |N| markers from visible text
-    const rawDisplay = dialogFullText.slice(0, Math.floor(dialogVisibleChars));
-    const cleanDisplay = rawDisplay.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
-    dialogContent.textContent = cleanDisplay + (dialogVisibleChars < dialogFullText.length ? '▊' : '');
+
+    // Wave gesture advances from the hint screen
+    if (dialogAllShown && dialogCooldown > 0) {
+      dialogCooldown -= dt;
+    } else if (dialogAllShown && dialogWavePending) {
+      dialogWavePending = false;
+      hintFlashTimer = 1.5;
+      dialogCooldown = 0;
+      enterEncuadre();
+    }
   } else {
     dialogActive = false;
     dialogAllShown = false;
@@ -2089,24 +2087,20 @@ function animate() {
     dialogCooldown = 0;
     dialogAutoTimer = 0;
     dialogAutoAdvanceSet = false;
+    dialogFadeTimer = 0;
     dialogEl.style.display = 'none';
+    dialogEl.style.opacity = '0';
     hintEl.style.display = 'none';
-    hintEl.style.color = 'rgba(180,180,180,0.6)';
-    hintEl.style.textShadow = '0 0 8px rgba(0,0,0,0.9)';
   }
 
   // ── Status overlay ──
   if (appState !== 'lectura' && hasFace) {
     statusEl.textContent = '> Persona a reflejar detectada';
-    statusEl.style.color = 'rgba(200, 200, 200, 0.7)';
-    statusEl.style.textShadow = '0 0 8px rgba(0,0,0,0.8)';
     statusTimer = 60;
   } else if (appState !== 'lectura' && statusTimer > 0) {
     statusTimer--;
   } else if (appState !== 'lectura') {
     statusEl.textContent = '> Esperando alguien para reflejar...';
-    statusEl.style.color = 'rgba(180, 180, 180, 0.5)';
-    statusEl.style.textShadow = '0 0 8px rgba(0,0,0,0.8)';
   }
 
   // ── Dynamic RGB glitch for box and oval ghosts ──
@@ -2161,6 +2155,16 @@ function animate() {
         }
       }
     }
+  }
+
+  // ── Spinner animation for waiting text ──
+  waitingSpinnerTick += dt;
+  if (waitingSpinnerTick > 0.1) {
+    waitingSpinnerTick = 0;
+    const frames = ['|', '/', '-', '\\'];
+    const idx = Math.floor(time * 10) % frames.length;
+    const sp = document.getElementById('waiting-spinner');
+    if (sp) sp.textContent = frames[idx];
   }
 
   renderer.render(scene, camera);
