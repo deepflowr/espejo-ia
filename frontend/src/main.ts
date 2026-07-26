@@ -780,6 +780,9 @@ const lecturaThinking = createLecturaThinking();
 const promptBox = createPromptBox();
 let storedPromptES = '';
 let promptESReady = false;
+let promptESDeferred = false;
+let cannyEdgeBase64: string | null = null;
+let waitingForCannyMorph = false;
 
 let lecturaLayersReady = false;
 
@@ -809,6 +812,11 @@ function enterLectura() {
   promptENBuffer = '';
   promptESBuffer = '';
   pendingChunks = [];
+  storedPromptES = '';
+  promptESReady = false;
+  promptESDeferred = false;
+  cannyEdgeBase64 = null;
+  waitingForCannyMorph = false;
   destroyDescriptionSprites();
 
   // Stop encuadre tracking
@@ -969,6 +977,9 @@ function leaveLectura() {
   pendingChunks = [];
   storedPromptES = '';
   promptESReady = false;
+  promptESDeferred = false;
+  cannyEdgeBase64 = null;
+  waitingForCannyMorph = false;
   promptBox.hide();
   destroyDescriptionSprites();
   // Clean up waiting text
@@ -1232,12 +1243,14 @@ let dialogActive = false;
 let dialogFullText = '';
 let dialogCleanText = '';
 let dialogWavePending = false;
+let encuadrePending = false;
 let waitingSpinnerTick = 0;
 let dialogFadeTimer = 0;
 let dialogCooldown = 0;
 let dialogIndex = 0;
 let hintFlashTimer = 0;
 let dialogAutoTimer = 0;
+let dialogAbsenceTimer = 0; // seconds before dialog resets on face loss
 let dialogAutoAdvanceSet = false;
 
 // ─── Face tracker (smooths detection data) ────────────────────
@@ -1316,6 +1329,12 @@ wsClient.onMessage = (data) => {
   if (data.type === 'photo_captured') {
     capturedPhotoBase64 = `data:image/png;base64,${data.image_b64}`;
   }
+  if (data.type === 'canny_ready') {
+    cannyEdgeBase64 = `data:image/png;base64,${data.image_b64}`;
+    if (waitingForCannyMorph) {
+      doCannyMorph();
+    }
+  }
   if (data.type === 'stream_chunk') {
     const ch = data.channel as string;
     const delta = data.text_delta as string;
@@ -1376,6 +1395,11 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
           // Show next text
           const wtEl = document.getElementById('waiting-text');
           if (wtEl) wtEl.textContent = 'Generando prompt para la imagen...';
+          // If prompt_es arrived before descripcion finished, show prompt box now
+          if (promptESDeferred) {
+            promptESDeferred = false;
+            showPromptBoxDelayed();
+          }
         });
       }
     }
@@ -1387,13 +1411,12 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
     if (delta) storedPromptES += delta;
     if (done) {
       promptESReady = true;
-      // Show prompt box with a delay after description sprites appear
-      setTimeout(() => {
-        if (storedPromptES) {
-          promptBox.show(storedPromptES);
-        }
-        const wt3 = document.getElementById('waiting-text'); if (wt3) wt3.textContent = 'Creando contornos de la cara...';
-      }, 3000);
+      // If descripcion hasn't finished yet, defer prompt box until after description's reading time
+      if (streamPhase !== 'done') {
+        promptESDeferred = true;
+      } else {
+        showPromptBoxDelayed();
+      }
     }
     return;
   }
@@ -1401,6 +1424,36 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
   if (ch === 'prompt_en') {
     return;
   }
+}
+
+// Show prompt box with a short delay after description sprites appear
+function showPromptBoxDelayed() {
+  setTimeout(() => {
+    if (storedPromptES) {
+      promptBox.show(storedPromptES);
+    }
+    const wt3 = document.getElementById('waiting-text');
+    if (wt3) wt3.textContent = 'Creando contornos de la cara...';
+    // Wait for canny edge to arrive from ComfyUI, then morph and update text
+    waitingForCannyMorph = true;
+    if (cannyEdgeBase64) {
+      doCannyMorph();
+    }
+  }, 3000);
+}
+
+// Morph the captured photo into the canny edge contours
+function doCannyMorph() {
+  waitingForCannyMorph = false;
+  if (analysisHUD && cannyEdgeBase64) {
+    const img = new Image();
+    img.onload = () => {
+      analysisHUD!.setPhoto(img);
+    };
+    img.src = cannyEdgeBase64;
+  }
+  const wt5 = document.getElementById('waiting-text');
+  if (wt5) wt5.textContent = 'Iniciando generación del reflejo';
 }
 wsClient.connect();
 // Handle binary camera frames from vision service (via orchestrator)
@@ -2075,24 +2128,50 @@ function animate() {
     // Wave gesture advances from the hint screen
     if (dialogAllShown && dialogCooldown > 0) {
       dialogCooldown -= dt;
-    } else if (dialogAllShown && dialogWavePending) {
+    } else if (dialogAllShown && dialogWavePending && !encuadrePending) {
       dialogWavePending = false;
+      encuadrePending = true;
       hintFlashTimer = 1.5;
-      dialogCooldown = 0;
-      enterEncuadre();
+      dialogHint.textContent = '✓ saludo detectado';
+      dialogHint.style.color = '#4ade80';
+      dialogHint.style.borderTopColor = 'rgba(74,222,128,0.2)';
+      // Brief pause so user sees the green text, then enter encuadre
+      setTimeout(() => {
+        encuadrePending = false;
+        enterEncuadre();
+      }, 500);
     }
+    // Reset absence timer when face is present
+    dialogAbsenceTimer = 4.0; // grace period
   } else {
-    dialogActive = false;
-    dialogAllShown = false;
-    dialogWavePending = false;
-    hintFlashTimer = 0;
-    dialogCooldown = 0;
-    dialogAutoTimer = 0;
-    dialogAutoAdvanceSet = false;
-    dialogFadeTimer = 0;
-    dialogEl.style.display = 'none';
-    dialogEl.style.opacity = '0';
-    hintEl.style.display = 'none';
+    // Don't reset immediately on face loss — wait a few seconds
+    if (dialogActive || dialogAllShown) {
+      dialogAbsenceTimer -= dt;
+      if (dialogAbsenceTimer > 0) {
+        // Keep dialog visible during grace period
+        if (dialogEl.style.display === 'none') {
+          dialogEl.style.display = 'block';
+          dialogEl.style.opacity = '0';
+          requestAnimationFrame(() => { dialogEl.style.opacity = '1'; });
+        }
+        if (dialogAllShown) dialogHint.style.display = 'block';
+      } else {
+        dialogActive = false;
+        dialogAllShown = false;
+        dialogWavePending = false;
+        encuadrePending = false;
+        hintFlashTimer = 0;
+        dialogCooldown = 0;
+        dialogAutoTimer = 0;
+        dialogAutoAdvanceSet = false;
+        dialogFadeTimer = 0;
+        dialogEl.style.display = 'none';
+        dialogEl.style.opacity = '0';
+        hintEl.style.display = 'none';
+      }
+    } else {
+      hintEl.style.display = 'none';
+    }
   }
 
   // ── Status overlay ──

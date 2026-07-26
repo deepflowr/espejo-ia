@@ -145,23 +145,12 @@ async def handler(websocket):
         global _wave_notification
         h, w = frame.shape[:2]
 
-        # Face box — primary person (blue)
-        for (x1, y1, x2, y2) in detector.face_boxes:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 150, 0), 3)
-            cv2.putText(frame, "PRIMARY", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 150, 0), 2)
-
-        # Hand landmarks + connections
+        # Hand landmarks + connections — white by default, green when waving
         for hand in detector.hand_data:
             pts = hand['landmarks']
-            is_open = hand['open']
             is_waving = hand['waving']
 
-            color = (0, 255, 255)  # yellow for open hand
-            if is_waving:
-                color = (0, 255, 0)   # green when waving
-            elif not is_open:
-                color = (0, 0, 255)   # red for closed hand
+            color = (0, 255, 0) if is_waving else (220, 220, 220)  # green when waving, white otherwise
 
             # Draw connections (finger segments)
             connections = [
@@ -180,26 +169,7 @@ async def handler(websocket):
 
             # Draw landmark dots
             for (x, y) in pts:
-                cv2.circle(frame, (int(x), int(y)), 4, color, -1)
-
-            # Label
-            label = "WAVING 👋" if is_waving else ("OPEN" if is_open else "CLOSED")
-            if pts:
-                cv2.putText(frame, label, (int(pts[0][0]), int(pts[0][1]) - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-        # ── Wave detected overlay ──
-        if _wave_notification > 0:
-            _wave_notification -= 1
-            alpha = min(_wave_notification / 30.0, 1.0)
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, h), (0, 255, 0), 8)
-            msg = "👋  SALUDO DETECTADO  👋"
-            (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)
-            cx, cy = (w - tw) // 2, h // 3
-            cv2.rectangle(overlay, (cx - 20, cy - th - 20), (cx + tw + 20, cy + 20), (0, 0, 0), -1)
-            cv2.putText(overlay, msg, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-            cv2.addWeighted(overlay, alpha * 0.6, frame, 1 - alpha * 0.6, 0, frame)
+                cv2.circle(frame, (int(x), int(y)), 5, color, -1)
 
         return frame
 
@@ -213,6 +183,8 @@ async def handler(websocket):
                 frame = video_buffer.get_frame()
                 if frame is not None:
                     raw = frame.copy()
+                    # Annotate with face box + hand landmarks + wave overlay
+                    raw = annotate_frame(raw)
                     if STREAM_SCALE < 1.0:
                         h, w = raw.shape[:2]
                         new_w = int(w * STREAM_SCALE)

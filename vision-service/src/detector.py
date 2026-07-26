@@ -17,10 +17,10 @@ PRESENCE_MIN_FRAMES = 3     # frames needed to confirm presence
 ABSENCE_MIN_FRAMES = 30     # ~6 seconds before declaring absent (at 5Hz)
 # Face must be at least this fraction of frame width to count as "present" (distance filter)
 MIN_FACE_WIDTH_RATIO = 0.06
-WAVE_HISTORY_SIZE = 12
-WAVE_MIN_AMPLITUDE = 0.05   # minimum movement amplitude (was 0.02)
-WAVE_MIN_ZERO_CROSSINGS = 4  # direction changes needed (was 3)
-WAVE_COOLDOWN_FRAMES = 30   # ~6 seconds at 5Hz (was 10)
+WAVE_HISTORY_SIZE = 6
+WAVE_MIN_AMPLITUDE = 0.04   # minimum movement amplitude
+WAVE_MIN_ZERO_CROSSINGS = 2  # direction changes needed (1 full cycle = ~400ms at 5Hz)
+WAVE_COOLDOWN_FRAMES = 15   # ~3 seconds at 5Hz (longer cooldown since detection is faster)
 
 
 class MediaPipeDetector:
@@ -167,12 +167,12 @@ class MediaPipeDetector:
     # ─── Internal helpers ──────────────────────────────────────
 
     def _is_open_hand(self, lm) -> bool:
-        """Check if hand is open (at least 3 fingers extended, using x,y only)."""
+        """Check if hand is open (at least 2 fingers extended, using x,y only)."""
         wrist = np.array([lm[0].x, lm[0].y])
         return sum(
-            np.linalg.norm(np.array([lm[t].x, lm[t].y]) - wrist) > 0.05
+            np.linalg.norm(np.array([lm[t].x, lm[t].y]) - wrist) > 0.04
             for t in [4, 8, 12, 16, 20]
-        ) >= 3
+        ) >= 2
 
     def _is_hand_near_face(self, hand) -> bool:
         """Check if the hand's wrist is within a generous region around the primary face."""
@@ -194,7 +194,7 @@ class MediaPipeDetector:
 
     def _detect_oscillation(self) -> bool:
         """Detect left-right oscillation of the wrist (waving motion)."""
-        if len(self._wrist_x) < 8:
+        if len(self._wrist_x) < WAVE_HISTORY_SIZE:
             return False
         diffs = np.diff(list(self._wrist_x))
         crossings = 0

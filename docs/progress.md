@@ -473,12 +473,23 @@ Eventually should emit JSON:
 - **Ollama models cleaned:** Removed `espejo-vl` (7GB) and `qwen3.5-9b-dsv4-flash` (5.6GB).
 
 ### 2026-07-26 (late) — Stream phase fix + ComfyUI node mapping update
-- **Summary:** Fixed two issues found during end-to-end testing. (1) The stream processing in the frontend didn't handle the `idle` phase — when the first `stream_chunk` arrived with `channel='descripcion'` while `streamPhase` was still `'idle'`, nothing was displayed. Now transitions from `idle` → `descripcion` and shows status messages ("enviando foto al modelo", "generando descripción..."). Also now shows description delta even when `done=true` (edge case where complete text arrives in a single chunk). (2) Updated the ComfyUI node channel mapping in `comfyui.js`: removed `prompt_en` (node 62 was stale), kept `prompt_es` (node 69) and `descripcion` (node 75), matching the current `EspejoIA.json` workflow.
+- **Summary:** Fixed two issues found during end-to-end testing. (1) The stream processing in the frontend didn't handle the `idle` phase. (2) Updated the ComfyUI node channel mapping.
 - **Modified:** `frontend/src/main.ts`, `orchestrator/src/services/comfyui.js`
 - **Fixes:**
-  - Stream phase now accepts `idle` → `descripcion` transition (was ignoring it)
+  - Stream phase now accepts `idle` → `descripcion` transition
   - Description delta rendered even when `done` flag is true
-  - ComfyUI node map corrected to match actual workflow nodes
+  - ComfyUI node map corrected
+
+### 2026-07-26 (night) — Multi-fix session: prompt duplicado, orden descripción, wave detection, anotaciones, morph canny
+- **Summary:** Heavy debugging session. Fixed 5+ issues across the pipeline.
+- **Fixes:**
+  1. **Prompt duplicado** (`comfyui.js`): Los textos de nodos QwenVL se enviaban por WebSocket (`executed` event) y luego se reenviaban desde history polling. Se agregó `Set(streamedChannels)` para trackear canales ya enviados y saltarlos en el fallback. También se agregó nodo 64 (`prompt_en`) al channelMap del WebSocket.
+  2. **Prompt box aparecía antes que la descripción** (`main.ts`): En el workflow de ComfyUI, nodo 69 (`prompt_es`) se ejecuta antes que 75 (`descripcion`). Se agregó flag `promptESDeferred` para diferir el prompt box hasta que la descripción termine su lectura.
+  3. **Diálogo se reiniciaba al perder presencia** (`main.ts`): Se agregó `dialogAbsenceTimer` (4s de gracia) para que una pérdida breve de rostro no reinicie los diálogos.
+  4. **Wave detection no funcionaba** (`detector.py`): `WAVE_HISTORY_SIZE=6` pero `_detect_oscillation` requería mínimo 8 muestras — nunca detectaba. Se corrigió usando `WAVE_HISTORY_SIZE`. Además se redujo `WAVE_MIN_ZERO_CROSSINGS` de 4→2, `WAVE_HISTORY_SIZE` de 12→6, y el umbral de mano abierta de 3→2 dedos.
+  5. **Anotaciones de mano en stream** (`vision_server.py`): Se activó `annotate_frame()` en el send loop para mostrar landmarks de mano (blancos normal, verde al saludar). Se eliminó face box y overlay de "SALUDO DETECTADO".
+  6. **Morph photo→canny edge** (`main.ts`): Cuando llega `canny_ready` (al completar ComfyUI), la foto mutea a los contornos Canny y el texto cambia a "Iniciando generación del reflejo".
+- **Modified:** `frontend/src/main.ts`, `orchestrator/src/services/comfyui.js`, `vision-service/src/detector.py`, `vision-service/src/vision_server.py`
 
 ---
 

@@ -261,11 +261,14 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onComp
     }
 
     const outputImages = resultData.images;
+    console.log(`ComfyUI output images: ${outputImages.map(i => i.filename).join(', ')}`);
 
     // Categorize by filename prefix
     const portrait = outputImages.find(i => i.filename.startsWith('espejo_portrait'));
     const canny = outputImages.find(i => i.filename.startsWith('espejo_canny'));
     const previews = outputImages.filter(i => i.filename.startsWith('espejo_preview'));
+
+    console.log(`ComfyUI categorized - portrait: ${!!portrait}, canny: ${!!canny}, previews: ${previews.length}`);
 
     const result = {};
 
