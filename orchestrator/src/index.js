@@ -17,6 +17,7 @@ const sessionStore = require('./session');
 const visionClient = require('./ws/visionClient');
 const { setupUiServer } = require('./ws/uiServer');
 const ollamaService = require('./services/ollama');
+const comfyuiService = require('./services/comfyui');
 
 // ─── App setup ────────────────────────────────────────────────
 const app = express();
@@ -114,6 +115,43 @@ stateMachine.onChange((newState) => {
       );
     } else {
       console.warn('LECTURA — no session or photo found');
+    }
+  }
+
+  if (newState === STATES.GENERACION) {
+    // Start ComfyUI generation with the prompt + photo
+    const session = sessionStore.get(currentSessionId);
+    if (session && session.prompt_en && session.photo) {
+      console.log('GENERACION — starting ComfyUI...');
+      broadcast({ type: 'gen_start' });
+      comfyuiService.generate(
+        session.prompt_en,
+        session.photo,
+        currentSessionId,
+        // onPreview
+        (preview) => {
+          broadcast({ type: 'gen_preview', ...preview });
+        },
+        // onComplete
+        (result) => {
+          console.log('=== ComfyUI complete ===');
+          sessionStore.set(currentSessionId, 'portrait', result.image_b64);
+          broadcast({ type: 'final_portrait', image_b64: result.image_b64 });
+          if (stateMachine.state === STATES.GENERACION) {
+            stateMachine.transition(STATES.REVELACION);
+          }
+        },
+        // onError
+        (err) => {
+          console.error('ComfyUI error:', err.message);
+          broadcast({ type: 'error', message: 'Error al generar la imagen' });
+          if (stateMachine.state === STATES.GENERACION) {
+            stateMachine.transition(STATES.REVELACION);
+          }
+        },
+      );
+    } else {
+      console.warn('GENERACION — no session, prompt, or photo found');
     }
   }
 

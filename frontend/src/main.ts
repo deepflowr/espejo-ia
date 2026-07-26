@@ -1158,7 +1158,7 @@ document.body.appendChild(camArrowEl);
 // ─── Bright overlay (outside oval only) ───────────────────────
 const brightEl = document.createElement('div');
 brightEl.id = 'encuadre-bright';
-brightEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.85);pointer-events:none;z-index:997;display:none';
+brightEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.55);pointer-events:none;z-index:997;display:none';
 document.body.appendChild(brightEl);
 
 // ─── Flash overlay (full white for capture) ───────────────────

@@ -20,6 +20,7 @@ espejo/
 │   └── progress.md                     # ← THIS FILE
 │
 ├── .venv/                              # Python venv (Python 3.13.14)
+├── EspejoIA.json                       # ComfyUI API workflow (Z-Image Turbo + ControlNet + Lineart)
 │
 ├── vision-service/
 │   ├── requirements.txt
@@ -415,6 +416,37 @@ Eventually should emit JSON:
   3. "Generando prompt para la imagen..." (after description done, box closes)
   4. "Creando contornos de la cara..." (when prompt box is shown)
 - **Fixed:** Extra `}` syntax error that broke the dialog logic (caused "unexpected else").
+
+### 2026-07-26 — ComfyUI API bridge + GENERACION state wiring
+- **Summary:** Built the ComfyUI integration. The orchestrator now sends the captured photo + `prompt_en` to ComfyUI's API, queues the EspejoIA workflow, and receives the generated portrait. State machine transitions from LECTURA → GENERACION → REVELACION.
+- **New files:** `EspejoIA.json` (API-exported workflow in project root)
+- **Modified:** `orchestrator/src/services/comfyui.js` (rewritten from stub), `orchestrator/src/index.js` (GENERACION handler)
+- **ComfyUI workflow (`EspejoIA.json`):**
+  - **Node 53:** `UNETLoader` → `z_image_turbo_fp8_e4m3fn.safetensors`
+  - **Node 18:** `ModelPatchLoader` → `Z-Image-Turbo-Fun-Controlnet-Union.safetensors`
+  - **Node 3:** `CLIPLoader` → `qwen_3_4b.safetensors` (lumina2)
+  - **Node 4:** `CLIPTextEncode` — receives dynamic `prompt_en` from Ollama
+  - **Node 11:** `LoadImage` — receives captured photo
+  - **Node 49:** `AIO_Preprocessor` (LineartStandardPreprocessor, 512px)
+  - **Node 19:** `QwenImageDiffsynthControlnet` (strength 0.9)
+  - **Node 7:** `EmptyLatentImage` (1024×1024)
+  - **Node 6:** `KSampler` (8 steps, euler, cfg=1, simple scheduler)
+  - **Node 8:** `VAEDecodePlusPlus`
+  - **Node 10:** `SaveImage` — output saved as `espejo_output_*.png`
+- **`comfyui.js` service:**
+  - Saves captured photo to `C:\ComfyUI\ComfyUI-Easy-Install\ComfyUI\input\`
+  - Queues workflow via `POST /api/prompt`
+  - Tracks progress via ComfyUI WebSocket (`progress` events)
+  - Polls `GET /api/history/{prompt_id}` for output images
+  - Fetches result via `GET /api/view`
+  - Callbacks: `onPreview({step, total_steps})`, `onComplete({image_b64})`, `onError(err)`
+- **`index.js` GENERACION handler:**
+  - Reads `prompt_en` + `photo` from session store
+  - Calls `comfyuiService.generate()` with callbacks
+  - `onPreview` → broadcasts `gen_preview` to frontend
+  - `onComplete` → saves portrait to session, broadcasts `final_portrait`, transitions to REVELACION
+  - `onError` → broadcasts error, still transitions to REVELACION
+- **Tested:** Full pipeline end-to-end: face detection → dialogs → wave → encuadre → capture → LECTURA (Ollama) → GENERACION (ComfyUI) → REVELACION. Successful execution: photo saved to ComfyUI input folder, workflow queued (prompt_id generated), output fetched.
 - **Summary:** Replaced the built-in webcam with the new Raptor Vision 4K webcam (CAMERA_INDEX=1, native 1440×2560 portrait). Implemented camera feed mirror (CSS `scaleX(-1)` on canvas + mirrored X for DOM elements). Added camera arrow indicator with "mirá la\ncámara" and "¡Sonreí!" text during encuadre. Replaced the Ollama model from custom `espejo-vl` (Qwen3-VL-8B, no thinking) to **Gemma 4 12B** (vision + native thinking via `think: true` parameter). System prompt now asks Gemma to reason in Spanish step by step. Thinking is accumulated and saved as `pensamiento_es`. Prompts are much more detailed with forced requirements (age range, face shape, eyes, nose, lips, skin texture, pores, scars, moles, piercings, tattoos, lighting, framing, etc.).
 - **Key fixes:**
   - Camera mirror: CSS `scaleX(-1)` on canvas + mirrored `p.x` for DOM overlays (box, oval, dialog text).
