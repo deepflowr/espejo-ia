@@ -33,7 +33,7 @@ export function createRevealMesh(): {
   el.id = 'lectura-reveal';
   el.style.cssText = [
     'position:fixed;top:0;left:0;width:100%;height:100%;',
-    'background:#fff;pointer-events:none;z-index:9998;',
+    'background:rgb(255,225,190);pointer-events:none;z-index:9998;',
     'opacity:0;display:none;transition:none',
   ].join('');
   document.body.appendChild(el);

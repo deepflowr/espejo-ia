@@ -11,7 +11,7 @@ export function createPromptBox() {
   container.id = 'prompt-box';
   container.style.cssText = [
     'position: fixed;',
-    'top: calc(38% + min(55vh, 440px) / 2 + 120px);',
+    'top: calc(32% + min(52vh, 400px) / 2 + 18px + 50px + 20px);',
     'left: 50%;',
     'transform: translateX(-50%) translateY(-20px);',
     'width: min(85vw, 650px);',
@@ -20,6 +20,7 @@ export function createPromptBox() {
     'display: none;',
     'opacity: 0;',
     'transition: opacity 0.6s ease, transform 0.6s ease;',
+    'animation: boxFloat 5s ease-in-out infinite;',
   ].join('');
   document.body.appendChild(container);
 
@@ -54,7 +55,7 @@ export function createPromptBox() {
   title.style.cssText = [
     'font: 12px Consolas, "Courier New", monospace;',
     'font-style: italic;',
-    'color: rgba(140, 160, 190, 0.6);',
+    'color: rgb(220, 210, 120);',
     'margin-bottom: 10px;',
     'text-transform: uppercase;',
     'letter-spacing: 1px;',
@@ -71,6 +72,8 @@ export function createPromptBox() {
     'line-height: 1.6;',
     'white-space: pre-wrap;',
     'word-wrap: break-word;',
+    'max-height: 35vh;',
+    'overflow-y: auto;',
     'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
   ].join('');
   box.appendChild(promptEl);

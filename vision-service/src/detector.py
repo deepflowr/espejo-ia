@@ -44,7 +44,7 @@ class MediaPipeDetector:
                 ),
                 running_mode=vision.RunningMode.IMAGE,
                 num_hands=2,
-                min_hand_detection_confidence=0.6,  # was 0.3 — reduces false positives
+                min_hand_detection_confidence=0.8,  # higher precision — fewer false positives
             )
         )
 
@@ -167,12 +167,12 @@ class MediaPipeDetector:
     # ─── Internal helpers ──────────────────────────────────────
 
     def _is_open_hand(self, lm) -> bool:
-        """Check if hand is open (at least 2 fingers extended, using x,y only)."""
+        """Check if hand is open (at least 3 fingers extended, using x,y only)."""
         wrist = np.array([lm[0].x, lm[0].y])
         return sum(
-            np.linalg.norm(np.array([lm[t].x, lm[t].y]) - wrist) > 0.04
+            np.linalg.norm(np.array([lm[t].x, lm[t].y]) - wrist) > 0.05
             for t in [4, 8, 12, 16, 20]
-        ) >= 2
+        ) >= 3
 
     def _is_hand_near_face(self, hand) -> bool:
         """Check if the hand's wrist is within a generous region around the primary face."""

@@ -491,6 +491,75 @@ Eventually should emit JSON:
   6. **Morph photo→canny edge** (`main.ts`): Cuando llega `canny_ready` (al completar ComfyUI), la foto mutea a los contornos Canny y el texto cambia a "Iniciando generación del reflejo".
 - **Modified:** `frontend/src/main.ts`, `orchestrator/src/services/comfyui.js`, `vision-service/src/detector.py`, `vision-service/src/vision_server.py`
 
+### 2026-07-27 — UX redesign LECTURA + ComfyUI two-phase pipeline + face snapshots flotantes
+- **Summary:** Complete redesign of LECTURA flow. Simplified welcome dialog (single box), eliminated waiting spinner, redesigned reading flow with countdown + wave-to-advance. Added floating face snapshots (polaroid-style B&W with scanlines + RGB ghost glitch) during thinking phase, then swap to canny edge. Implemented two-phase ComfyUI pipeline (text prompt → parallel image gen). Canny edge arrives early via aggressive polling and feeds into the visual flow.
+- **UX Changes:**
+  - Welcome dialog: simplified to single box with slide-up entrance, `WELCOME_TEXT` replaces old `DIALOGS` array.
+  - Fill light: changed to warm tone (`rgba(255,225,190,0.45)`), flash to `rgba(255,210,170,0.5)`.
+  - Encuadre: position guidance hints added. Oval increased from 35%→44% vh. Capture targets 1024×1024.
+  - Status text: two-line layout with main text + countdown subtitle. Yellow color `rgb(220,210,120)`.
+  - LECTURA countdown: "Tiempo restante estimado: 15s" → counts down, at 0 shows "Capturando los últimos detalles...".
+  - When descripcion arrives: thinking box appears with "> DESCRIPCIÓN" title, text streams in. Yellow bullets.
+  - Post-wave phases: "Saludo detectado" → "Generando prompt..." (2s countdown) → "Prompt completado ✓" (2s, shows prompt box) → "Generando contornos de la cara..." (15s countdown, or until canny arrives) → "Enviando contornos y prompt...".
+  - Camera opacity: 0.35 during wave-waiting phase for hand tracking visibility.
+  - Wave timer: 1.5s minimum before accepting wave. Old waves reset when descripcion arrives.
+- **Face Snapshots Flotantes:**
+  - 100 floating polaroids with B&W + strong scanlines effect + RGB ghost glitch.
+  - 3D rotation (THREE.Mesh with PlaneGeometry instead of Sprite).
+  - Different depths (some very close at z=-0.08, others far at z=-8.3).
+  - Ghost glitch matches wireframes pattern: timer-driven (60-160ms), RGB bursts, position jitter, color decay toward gray.
+  - Persist throughout LECTURA. When canny arrives, textures swap from photo to canny edge.
+  - Question sprites (20 questions like "¿Qué edad tiene?") float during thinking phase, destroyed when descripcion arrives.
+- **ComfyUI Pipeline:**
+  - Two-phase: text workflow (QwenVL) + image workflow (Z-Image Turbo + ControlNet).
+  - Phase 2 triggers immediately when prompt_en is available (parallel execution).
+  - Canny edge polled aggressively (300ms) and sent to frontend as soon as available.
+  - Image workflow uses `EspejoIA_image.json` with node mapping: 11→LoadImage, 4→CLIP (prompt_en), 56→Canny output, 10→portrait output.
+- **Orchestrator:** `comfyui.js` rewritten with dual workflow loading, `pollForImage()` for early canny detection, race condition guard (10s wait for imagePromptId).
+- **Frontend fixes:**
+  - Canny double-prefix bug fixed (`data:image/png;base64,` applied twice).
+  - Cross-fade on canny morph (opacity 0→0.3s→swap→opacity 1) + flash pulse.
+  - Box titles changed to yellow: `> DESCRIPCIÓN`, `> PROMPT (ES)`, `> ESPEJO IA`.
+  - Prompt box positioned matching thinking box.
+  - Floating text sprites (questions + description) use yellow asterisks.
+  - Face snapshots can be mirrored via existing CSS `transform: scaleX(-1)` on `imgEl`.
+- **Known Issue:** `prompt_es` se corta — el texto del prompt en español llega truncado desde ComfyUI (el nodo ShowText no envía el texto completo o el LLM lo genera incompleto). Pendiente de diagnosticar.
+- **Files modified:**
+  - `frontend/src/main.ts` — LECTURA flow, face snapshots, question sprites, canny morph, status text, wave timer, camera opacity.
+  - `frontend/src/layers/lectura-thinking.ts` — Simplified, yellow title.
+  - `frontend/src/layers/prompt-box.ts` — Yellow title, scrollable, position fix.
+  - `frontend/src/layers/analysis-hud.ts` — Floating animation, photo size adjustments.
+  - `frontend/src/data/dialogs.ts` — Rewritten: WELCOME_TEXT, WAVE_SVG, CHECK_SVG.
+  - `orchestrator/src/index.js` — onCannyReady callback.
+  - `orchestrator/src/services/comfyui.js` — Complete rewrite: two-phase pipeline, dual workflow loading, early canny polling.
+  - `frontend/public/face-effects-preview.html` — New: visual effect preview tool.
+
+---
+
+## Plan de experimento: `experiment/faster-times`
+
+### Objetivo
+Reducir tiempos de generación e interacción. Repensar flujo de estados para hacerlo más ágil.
+
+### Ideas por estado
+
+| Estado | Decisión |
+|--------|----------|
+| **REPOSO** | ✅ Sin cambios |
+| **DESPERTAR** | 🔧 Simplificar — los diálogos son muy largos. Reducir cantidad de textos o acelerar auto-avance |
+| **CAPTURA** | ✅ Igual. Quizás ajustar iluminación/luz de relleno |
+| **CONGELADO** | ❌ Eliminar — innecesario. Transición directa CAPTURA → LECTURA |
+| **LECTURA** | 💡 Oportunidad grande. Separar generación de texto en un workflow de ComfyUI solo para texto (QwenVL). Repensar cómo se muestra la info en frontend (timing, animaciones, qué se ve y cuándo) |
+| **GENERACION** | 💡 Capturar `prompt_en` y mandar foto + canny al prompt de imagen. Definir cómo mostrar: canny edge, prompt, y pasos de generación en frontend. Armar backend que aún no está hecho |
+| **REVELACION** | 💡 Cuando carga la cara nueva, animación en frontend para que backend gane tiempo para face swap. Animación que revele el face swap |
+| **ESPEJO_ACTIVO** | 💡 Infinito hasta gesto específico para terminar. El gesto debe ser algo que no se triggerée fácil mientras la persona se mueve probando el face swap |
+| **SOUVENIR** | 💡 QR que la persona escanea → accede a interfaz en el celular → pone su mail → recibe todo |
+| **CIERRE** | 💡 Por definir |
+
+### Reset
+- Después de CAPTURA: si se pierde presencia > **20s**, volver a REPOSO
+- En estados avanzados (LECTURA+): **no resetear** (para no tener que reprobar todo desde cero)
+
 ---
 
 ## Next Steps (prioritized)

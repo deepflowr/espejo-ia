@@ -11,7 +11,7 @@ export function createLecturaThinking() {
   container.id = 'lectura-thinking';
   container.style.cssText = [
     'position: fixed;',
-    'top: calc(38% + min(55vh, 440px) / 2 + 120px);',
+    'top: calc(32% + min(52vh, 400px) / 2 + 18px + 50px + 20px);',
     'left: 50%;',
     'transform: translateX(-50%) translateY(-20px);',
     'width: min(85vw, 650px);',
@@ -20,8 +20,18 @@ export function createLecturaThinking() {
     'display: none;',
     'opacity: 0;',
     'transition: opacity 0.6s ease, transform 0.6s ease;',
+    'animation: boxFloat 5s ease-in-out infinite;',
   ].join('');
   document.body.appendChild(container);
+  const boxAnimStyle = document.createElement('style');
+  boxAnimStyle.textContent = `
+    @keyframes boxFloat {
+      0% { transform: translateX(-50%) translateY(-2px); }
+      50% { transform: translateX(-50%) translateY(2px); }
+      100% { transform: translateX(-50%) translateY(-2px); }
+    }
+  `;
+  document.head.appendChild(boxAnimStyle);
 
   // ─── Inner box ────────────────────────────────────────────
   const box = document.createElement('div');
@@ -47,30 +57,19 @@ export function createLecturaThinking() {
     return g;
   });
 
-  // ─── Status header ────────────────────────────────────────
-  const headerEl = document.createElement('div');
-  headerEl.style.cssText = [
+  // ─── Title: DESCRIPCIÓN ───────────────────────────────────
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = [
     'font: 12px Consolas, "Courier New", monospace;',
     'font-style: italic;',
-    'color: rgba(140, 160, 190, 0.6);',
-    'margin-bottom: 10px;',
+    'color: rgb(220, 210, 120);',
+    'margin-bottom: 12px;',
     'text-transform: uppercase;',
     'letter-spacing: 1px;',
     'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
   ].join('');
-  headerEl.textContent = '> generando descripción...';
-  box.appendChild(headerEl);
-
-  // ─── Completed steps ──────────────────────────────────────
-  const stepsEl = document.createElement('div');
-  stepsEl.style.cssText = [
-    'font: 11px Consolas, "Courier New", monospace;',
-    'font-style: italic;',
-    'color: rgba(140, 160, 190, 0.45);',
-    'margin-bottom: 8px;',
-    'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
-  ].join('');
-  box.appendChild(stepsEl);
+  titleEl.textContent = '> DESCRIPCIÓN';
+  box.appendChild(titleEl);
 
   // ─── Description content ──────────────────────────────────
   const contentEl = document.createElement('div');
@@ -85,53 +84,10 @@ export function createLecturaThinking() {
   ].join('');
   box.appendChild(contentEl);
 
-  // ─── Separator ────────────────────────────────────────────
-  const sep = document.createElement('div');
-  sep.style.cssText = [
-    'height: 1px;',
-    'background: rgba(255,255,255,0.06);',
-    'margin: 12px 0 10px 0;',
-    'display: none;',
-  ].join('');
-  box.appendChild(sep);
-
-  // ─── Note ─────────────────────────────────────────────────
-  const note = document.createElement('div');
-  note.style.cssText = [
-    'font: 11px Consolas, "Courier New", monospace;',
-    'font-style: italic;',
-    'color: rgba(140, 160, 190, 0.45);',
-    'line-height: 1.5;',
-    'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
-    'display: none;',
-  ].join('');
-  note.textContent = '* Análisis visual generado por el modelo de IA.';
-  box.appendChild(note);
-
   // ─── State ────────────────────────────────────────────────
   let visible = false;
-  let autoCloseTimer = -1;
-  let autoCloseCallback: (() => void) | null = null;
   let ghostTimer = 0;
   let descriptionBuffer = '';
-  let spinnerInterval: number | null = null;
-  let elapsedTime = 0;
-  let timerRunning = false;
-  const SPINNER_CHARS = ['/', '-', '\\', '|'];
-  let statusBase = ''; // base text without spinner/timer
-
-  // ─── Update header with spinner + elapsed time ─────────────
-  function refreshHeader() {
-    let text = '> ' + statusBase;
-    if (timerRunning) {
-      const secs = Math.floor(elapsedTime);
-      text += ' [' + secs + 's]';
-    }
-    if (spinnerInterval !== null) {
-      // Append current spinner char (will be updated by interval)
-    }
-    headerEl.textContent = text;
-  }
 
   // ─── Public API ──────────────────────────────────────────
 
@@ -155,65 +111,34 @@ export function createLecturaThinking() {
     container.remove();
   }
 
-  function setStatus(text: string) {
-    statusBase = text;
-    refreshHeader();
+  function setStatus(_text: string) {
+    // No-op — status now via lectura-status element
   }
 
   function startSpinner() {
-    stopSpinner();
-    timerRunning = true;
-    elapsedTime = 0;
-    let i = 0;
-    spinnerInterval = window.setInterval(() => {
-      const s = headerEl.textContent || '';
-      const base = s.replace(/ [\/\\| -]$/, '');
-      headerEl.textContent = base + ' ' + SPINNER_CHARS[i % SPINNER_CHARS.length];
-      i++;
-    }, 250);
-    refreshHeader();
+    // No-op — removed
   }
 
   function stopSpinner() {
-    if (spinnerInterval !== null) {
-      clearInterval(spinnerInterval);
-      spinnerInterval = null;
-    }
-    timerRunning = false;
-    // Remove trailing spinner char
-    const s = headerEl.textContent || '';
-    headerEl.textContent = s.replace(/ [\/\\| -]$/, '');
+    // No-op — removed
   }
 
-  function appendLine(text: string) {
-    if (!visible) return;
-    const dot = document.createElement('span');
-    dot.style.cssText = 'color:rgba(100,200,130,0.5);margin-right:6px;';
-    dot.textContent = '✓';
-    const span = document.createElement('span');
-    span.textContent = text;
-    const line = document.createElement('div');
-    line.style.cssText = 'margin-bottom:2px;opacity:0;transition:opacity 0.5s ease;';
-    line.appendChild(dot);
-    line.appendChild(span);
-    stepsEl.appendChild(line);
-    requestAnimationFrame(() => { line.style.opacity = '1'; });
+  function appendLine(_text: string) {
+    // No-op — removed
   }
 
   function showDescription(delta: string) {
     if (!visible) return;
     descriptionBuffer += delta;
     contentEl.style.display = 'block';
-    contentEl.textContent = descriptionBuffer;
+    contentEl.innerHTML = descriptionBuffer.replace(
+      /^(\s*)\*/gm,
+      '$1<span style="color:rgb(220,210,120)">*</span>'
+    );
   }
 
-  function descriptionDone(delayMs: number = 6000, onClose?: () => void) {
-    if (!visible) return;
-    // Show separator and note
-    sep.style.display = 'block';
-    note.style.display = 'block';
-    autoCloseTimer = delayMs;
-    autoCloseCallback = onClose || null;
+  function descriptionDone(_delayMs?: number, _onClose?: () => void) {
+    // No-op — wave-based flow now
   }
 
   function close() {
@@ -222,25 +147,6 @@ export function createLecturaThinking() {
 
   function update(dt: number) {
     if (!visible) return;
-
-    // Update elapsed timer
-    if (timerRunning) {
-      elapsedTime += dt;
-      refreshHeader();
-    }
-
-    // Auto-close countdown
-    if (autoCloseTimer > 0) {
-      autoCloseTimer -= dt * 1000;
-      if (autoCloseTimer <= 0) {
-        if (autoCloseCallback) {
-          const cb = autoCloseCallback;
-          autoCloseCallback = null;
-          cb();
-        }
-        hide();
-      }
-    }
 
     // RGB ghost glitch
     ghostTimer -= dt;

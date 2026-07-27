@@ -2,14 +2,26 @@
  * El Espejo — Dialog / narration strings
  *
  * All user-facing text lives here so it's easy to iterate.
- * Each entry is a complete message shown with a typing effect
- * when a person is detected.
+ * Currently: single welcome box shown on presence detection.
  */
 
-export const DIALOGS: string[] = [
-  'Alguien te espera de este lado del espejo. || Pero todavía no existe.',
-  'Su cara se va a generar en tiempo real a partir de los contornos y facciones de la tuya, ||de cómo la IA te describa ||y de las miles de caras de las que aprendió.',
-  'El espejo decide todo.',
-  'Cómo te describe. ||Cómo te genera. ||Cómo podría ser tu cara... ||o cómo debería ser.',
-  '¿Empezamos?'
-];
+export const WELCOME_TEXT = `No es un filtro.
+Es una foto de tu cara.
+Una IA la analiza.
+Otra extrae sus contornos.
+Una tercera genera un retrato nuevo.
+Y una cuarta que refleja esa cara en vos.
+Todo en tiempo real. Lo ves todo en pantalla.`;
+
+export const WELCOME_HINT = '> Saludá con la mano para empezar';
+
+// Inline SVG for waving hand — inherits color via currentColor
+const WAVE_SVG_RAW = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 256 256" style="vertical-align:middle;margin-left:4px;"><path d="M220.17,100,202.86,70a28,28,0,0,0-38.24-10.25,27.69,27.69,0,0,0-9,8.34L138.2,38a28,28,0,0,0-48.48,0A28,28,0,0,0,48.15,74l1.59,2.76A27.67,27.67,0,0,0,38,80.41a28,28,0,0,0-10.24,38.25l40,69.32a87.47,87.47,0,0,0,53.43,41,88.56,88.56,0,0,0,22.92,3,88,88,0,0,0,76.06-132Zm-6.66,62.64A72,72,0,0,1,81.62,180l-40-69.32a12,12,0,0,1,20.78-12L81.63,132a8,8,0,1,0,13.85-8L62,66A12,12,0,1,1,82.78,54L114,108a8,8,0,1,0,13.85-8L103.57,58h0a12,12,0,1,1,20.78-12l33.42,57.9a48,48,0,0,0-5.54,60.6,8,8,0,0,0,13.24-9A32,32,0,0,1,172.78,112a8,8,0,0,0,2.13-10.4L168.23,90A12,12,0,1,1,189,78l17.31,30A71.56,71.56,0,0,1,213.51,162.62ZM184.25,31.71A8,8,0,0,1,194,26a59.62,59.62,0,0,1,36.53,28l.33.57a8,8,0,1,1-13.85,8l-.33-.57a43.67,43.67,0,0,0-26.8-20.5A8,8,0,0,1,184.25,31.71ZM80.89,237a8,8,0,0,1-11.23,1.33A119.56,119.56,0,0,1,40.06,204a8,8,0,0,1,13.86-8,103.67,103.67,0,0,0,25.64,29.72A8,8,0,0,1,80.89,237Z"></path></svg>`;
+
+export const WAVE_SVG = WAVE_SVG_RAW;
+
+// Green check SVG for detected state
+export const CHECK_SVG = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+  <path d="M20 6L9 17l-5-5"/>
+</svg>`;
+

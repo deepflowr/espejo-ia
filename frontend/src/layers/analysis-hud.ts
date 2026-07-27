@@ -2,9 +2,9 @@
  * AnalysisHUD — captured photo with polaroid frame + scanner line.
  */
 
-const PHOTO_SIZE = 'min(55vh, 440px)';
-const PHOTO_TOP = '38%';
-const PAD = '12px'; // polaroid white border
+const PHOTO_SIZE = 'min(52vh, 400px)';
+const PHOTO_TOP = '32%';
+const PAD = '10px'; // polaroid white border
 
 export async function createAnalysisHUD(): Promise<{
   update: (time: number, dt: number) => void;
@@ -29,6 +29,19 @@ export async function createAnalysisHUD(): Promise<{
     transition: opacity 0.8s ease;
     display: none;
   `;
+  // Floating animation
+  const floatStyle = document.createElement('style');
+  floatStyle.textContent = `
+    @keyframes fotoFloat {
+      0% { transform: translate(-50%, calc(-50% - 4px)); }
+      50% { transform: translate(-50%, calc(-50% + 4px)); }
+      100% { transform: translate(-50%, calc(-50% - 4px)); }
+    }
+    #lectura-photo.visible {
+      animation: fotoFloat 4s ease-in-out infinite;
+    }
+  `;
+  document.head.appendChild(floatStyle);
   document.body.appendChild(outer);
 
   // ─── Polaroid border (white frame around photo) ─────────────
@@ -117,6 +130,7 @@ export async function createAnalysisHUD(): Promise<{
     visible = true;
     outer.style.display = 'block';
     outer.style.opacity = '1';
+    outer.classList.add('visible');
     scanProgress = 1;
   }
 

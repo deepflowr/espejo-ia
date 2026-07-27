@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Efectos para Face Snapshots</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #ccc;
+    font: 14px Consolas, monospace;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; color: #fff; margin-bottom: 8px; }
+  p  { color: #888; margin-bottom: 24px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    max-width: 1200px;
+  }
+  .card {
+    background: #151515;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: rgba(255,255,255,0.3); }
+  .card canvas { width: 100%; aspect-ratio: 1; display: block; border-radius: 2px; }
+  .card .label {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .card.selected {
+    border-color: rgb(220,210,120);
+    box-shadow: 0 0 12px rgba(220,210,120,0.15);
+  }
+  .card.selected .label { color: rgb(220,210,120); }
+  #drop-zone {
+    border: 2px dashed #333;
+    border-radius: 4px;
+    padding: 40px;
+    text-align: center;
+    margin-bottom: 24px;
+    color: #666;
+    cursor: pointer;
+    transition: border-color 0.3s, background 0.3s;
+  }
+  #drop-zone:hover { border-color: #666; background: #111; }
+  #drop-zone.dragover { border-color: rgb(220,210,120); background: #1a1a0a; }
+  #original-preview {
+    max-width: 200px;
+    border-radius: 2px;
+    display: none;
+    margin: 12px auto;
+  }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #status { color: #555; font-size: 12px; }
+  #apply-btn {
+    background: rgb(220,210,120);
+    color: #000;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 24px;
+    font: 14px Consolas, monospace;
+    cursor: pointer;
+    display: none;
+    margin-top: 16px;
+  }
+  #apply-btn:hover { background: rgb(240,230,140); }
+</style>
+</head>
+<body>
+
+<h1>🎞️ Efectos para Face Snapshots</h1>
+<p>Subí una foto o usá la imagen por defecto para previsualizar los efectos.</p>
+
+<div id="drop-zone">
+  <div id="drop-text">Arrastrá una foto acá o hacé click para subir</div>
+  <img id="original-preview" />
+  <input type="file" id="file-input" accept="image/*" style="display:none" />
+</div>
+
+<div class="row">
+  <div id="status">Cargando imagen por defecto...</div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<button id="apply-btn">✓ Aplicar efecto seleccionado</button>
+
+<script>
+const EFFECTS = [
+  { id: 'bw',       label: 'B&N + Mirror (actual)' },
+  { id: 'scanlines',label: '▶ Scanlines suave' },
+  { id: 'scanlines2',label:'◀ Scanlines fuerte' },
+  { id: 'halftone', label: 'Halftone' },
+  { id: 'dither',   label: 'Dithering' },
+  { id: 'glitch',   label: 'Glitch RGB' },
+  { id: 'posterize',label: 'Posterize' },
+  { id: 'pixelate', label: 'Pixelate 32×32' },
+  { id: 'vhs',      label: 'VHS Chroma Shift' },
+  { id: 'noise',    label: '▶ Noise+Vignette suave' },
+  { id: 'noise2',   label: '◀ Noise+Vignette fuerte' },
+  { id: 'ink',      label: 'Tinta (edge detect)' },
+  { id: 'mosaic',   label: 'Mosaico' },
+  { id: 'duotone',  label: 'Duotono (azul/naranja)' },
+];
+
+let sourceImg = null;
+let selectedEffect = 'bw';
+let cards = [];
+
+// ─── Default test image (a face-like gradient so effects are visible) ───
+function generateTestImage() {
+  const c = document.createElement('canvas');
+  c.width = 320; c.height = 320;
+  const ctx = c.getContext('2d');
+  // Radial gradient face silhouette
+  const grad = ctx.createRadialGradient(160, 140, 20, 160, 160, 180);
+  grad.addColorStop(0, '#e8d5c0');
+  grad.addColorStop(0.4, '#d4b896');
+  grad.addColorStop(0.7, '#b8956e');
+  grad.addColorStop(1, '#1a1a1a');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(160, 160, 120, 150, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#3a2a1a';
+  ctx.beginPath(); ctx.ellipse(120, 130, 14, 10, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(200, 130, 14, 10, 0, 0, Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle = '#1a0a00';
+  ctx.beginPath(); ctx.arc(122, 130, 5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(198, 130, 5, 0, Math.PI*2); ctx.fill();
+  // Mouth
+  ctx.strokeStyle = '#6a4a3a';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(160, 200, 30, 0.1, Math.PI-0.1); ctx.stroke();
+  // Nose
+  ctx.fillStyle = '#c4a88a';
+  ctx.beginPath(); ctx.ellipse(160, 165, 8, 12, 0, 0, Math.PI*2); ctx.fill();
+  // Hair (some texture)
+  ctx.fillStyle = '#2a1a0a';
+  for (let i = 0; i < 60; i++) {
+    const x = 70 + Math.random() * 180;
+    const y = 20 + Math.random() * 80;
+    const w = 2 + Math.random() * 6;
+    ctx.fillRect(x, y, w, 1 + Math.random() * 3);
+  }
+  return c;
+}
+
+// ─── Effects ────────────────────────────────────────────
+
+function applyBW(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  for (let i = 0; i < d.data.length; i += 4) {
+    const g = d.data[i] * 0.299 + d.data[i+1] * 0.587 + d.data[i+2] * 0.114;
+    d.data[i] = d.data[i+1] = d.data[i+2] = g;
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyHalftone(ctx, w, h, cellSize = 8) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const cols = Math.ceil(w / cellSize);
+  const rows = Math.ceil(h / cellSize);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let sum = 0, count = 0;
+      for (let y = r * cellSize; y < (r + 1) * cellSize && y < h; y++) {
+        for (let x = c * cellSize; x < (c + 1) * cellSize && x < w; x++) {
+          const i = (y * w + x) * 4;
+          sum += d.data[i] * 0.299 + d.data[i+1] * 0.587 + d.data[i+2] * 0.114;
+          count++;
+        }
+      }
+      const avg = sum / count;
+      const radius = (1 - avg / 255) * (cellSize / 2) * 0.85;
+      if (radius > 0.5) {
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(c * cellSize + cellSize / 2, r * cellSize + cellSize / 2, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function applyScanlines(ctx, w, h, spacing = 3, darkness = 0.5) {
+  const d = ctx.getImageData(0, 0, w, h);
+  for (let y = 0; y < h; y += spacing) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      d.data[i] *= darkness;
+      d.data[i+1] *= darkness;
+      d.data[i+2] *= darkness;
+    }
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyScanlinesStrong(ctx, w, h) {
+  // Every other line completely black, every 2px
+  const d = ctx.getImageData(0, 0, w, h);
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      d.data[i] = 0; d.data[i+1] = 0; d.data[i+2] = 0;
+    }
+  }
+  // Also dim the remaining lines
+  for (let y = 1; y < h; y += 4) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      d.data[i] *= 0.3; d.data[i+1] *= 0.3; d.data[i+2] *= 0.3;
+    }
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyDither(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const j = i * 4;
+    gray[i] = d.data[j] * 0.299 + d.data[j+1] * 0.587 + d.data[j+2] * 0.114;
+  }
+  // Floyd-Steinberg
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const old = gray[idx];
+      const newVal = old < 128 ? 0 : 255;
+      const err = old - newVal;
+      gray[idx] = newVal;
+      if (x + 1 < w) gray[y * w + x + 1] += err * 7 / 16;
+      if (y + 1 < h) {
+        if (x > 0) gray[(y + 1) * w + x - 1] += err * 3 / 16;
+        gray[(y + 1) * w + x] += err * 5 / 16;
+        if (x + 1 < w) gray[(y + 1) * w + x + 1] += err * 1 / 16;
+      }
+    }
+  }
+  for (let i = 0; i < w * h; i++) {
+    const j = i * 4;
+    const v = Math.max(0, Math.min(255, Math.round(gray[i])));
+    d.data[j] = d.data[j+1] = d.data[j+2] = v;
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyGlitch(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const out = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      // Red channel shifted right
+      const rx = Math.min(w - 1, x + 6);
+      const ri = (y * w + rx) * 4;
+      out.data[i] = d.data[ri];
+      // Green channel shifted left
+      const gx = Math.max(0, x - 4);
+      const gi = (y * w + gx) * 4;
+      out.data[i+1] = d.data[gi];
+      // Blue channel normal
+      out.data[i+2] = d.data[i+2];
+      out.data[i+3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+function applyPosterize(ctx, w, h, levels = 4) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const step = 255 / (levels - 1);
+  for (let i = 0; i < d.data.length; i += 4) {
+    const g = (d.data[i] * 0.299 + d.data[i+1] * 0.587 + d.data[i+2] * 0.114);
+    const quant = Math.round(g / step) * step;
+    d.data[i] = d.data[i+1] = d.data[i+2] = Math.min(255, quant);
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyPixelate(ctx, w, h, size = 32) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const out = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y += size) {
+    for (let x = 0; x < w; x += size) {
+      let sr = 0, sg = 0, sb = 0, count = 0;
+      for (let py = y; py < y + size && py < h; py++) {
+        for (let px = x; px < x + size && px < w; px++) {
+          const i = (py * w + px) * 4;
+          sr += d.data[i]; sg += d.data[i+1]; sb += d.data[i+2];
+          count++;
+        }
+      }
+      sr /= count; sg /= count; sb /= count;
+      for (let py = y; py < y + size && py < h; py++) {
+        for (let px = x; px < x + size && px < w; px++) {
+          const i = (py * w + px) * 4;
+          out.data[i] = sr; out.data[i+1] = sg; out.data[i+2] = sb; out.data[i+3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+function applyVHS(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const out = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const shift = Math.sin(y * 0.05) * 4;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const sx = Math.max(0, Math.min(w - 1, x + shift));
+      const si = (y * w + Math.floor(sx)) * 4;
+      out.data[i] = d.data[si];
+      out.data[i+1] = d.data[si + 1];
+      out.data[i+2] = d.data[si + 2];
+      out.data[i+3] = 255;
+    }
+  }
+  // Add some color bleed
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const bleedX = Math.max(0, Math.min(w - 1, x + 3));
+      out.data[i] = out.data[(y * w + bleedX) * 4];
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+function applyNoiseVignette(ctx, w, h, strength = 1) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, maxDist = Math.sqrt(cx * cx + cy * cy);
+  const noiseAmt = 30 * strength;
+  const vigStrength = 0.6 * Math.min(1, strength * 1.3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const noise = (Math.random() - 0.5) * noiseAmt;
+      d.data[i] += noise; d.data[i+1] += noise; d.data[i+2] += noise;
+      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2) / maxDist;
+      const vignette = 1 - dist * vigStrength;
+      d.data[i] *= vignette; d.data[i+1] *= vignette; d.data[i+2] *= vignette;
+    }
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyInk(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const j = i * 4;
+    gray[i] = d.data[j] * 0.299 + d.data[j+1] * 0.587 + d.data[j+2] * 0.114;
+  }
+  // Simple Sobel edge detection
+  const out = ctx.createImageData(w, h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = y * w + x;
+      const gx = -gray[idx - w - 1] + gray[idx - w + 1] - 2 * gray[idx - 1] + 2 * gray[idx + 1] - gray[idx + w - 1] + gray[idx + w + 1];
+      const gy = -gray[idx - w - 1] - 2 * gray[idx - w] - gray[idx - w + 1] + gray[idx + w - 1] + 2 * gray[idx + w] + gray[idx + w + 1];
+      const mag = Math.min(255, Math.sqrt(gx * gx + gy * gy));
+      const j = idx * 4;
+      const v = 255 - mag;
+      out.data[j] = out.data[j+1] = out.data[j+2] = v;
+      out.data[j+3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+function applyMosaic(ctx, w, h, size = 12) {
+  const d = ctx.getImageData(0, 0, w, h);
+  for (let y = 0; y < h; y += size) {
+    for (let x = 0; x < w; x += size) {
+      // Pick center pixel color
+      const cy2 = Math.min(y + size / 2, h - 1);
+      const cx2 = Math.min(x + size / 2, w - 1);
+      const i = (cy2 * w + cx2) * 4;
+      const cr = d.data[i], cg = d.data[i+1], cb = d.data[i+2];
+      // Fill cell
+      for (let py = y; py < y + size && py < h; py++) {
+        for (let px = x; px < x + size && px < w; px++) {
+          const j = (py * w + px) * 4;
+          d.data[j] = cr; d.data[j+1] = cg; d.data[j+2] = cb;
+        }
+      }
+    }
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+function applyDuotone(ctx, w, h) {
+  const d = ctx.getImageData(0, 0, w, h);
+  const c1 = [20, 40, 180]; // dark blue
+  const c2 = [220, 140, 40]; // orange
+  for (let i = 0; i < d.data.length; i += 4) {
+    const g = d.data[i] * 0.299 + d.data[i+1] * 0.587 + d.data[i+2] * 0.114;
+    const t = g / 255;
+    d.data[i]   = c1[0] + (c2[0] - c1[0]) * t;
+    d.data[i+1] = c1[1] + (c2[1] - c1[1]) * t;
+    d.data[i+2] = c1[2] + (c2[2] - c1[2]) * t;
+  }
+  ctx.putImageData(d, 0, 0);
+}
+
+// ─── Render effect on canvas ────────────────────────────
+
+const EFFECT_FN = {
+  bw:       (ctx, w, h) => { applyBW(ctx, w, h); },
+  halftone: (ctx, w, h) => { applyHalftone(ctx, w, h); },
+  scanlines:(ctx, w, h) => { applyBW(ctx, w, h); applyScanlines(ctx, w, h, 3, 0.5); },
+  scanlines2:(ctx,w,h) => { applyBW(ctx, w, h); applyScanlinesStrong(ctx, w, h); },
+  dither:   (ctx, w, h) => { applyDither(ctx, w, h); },
+  glitch:   (ctx, w, h) => { applyBW(ctx, w, h); applyGlitch(ctx, w, h); },
+  posterize:(ctx, w, h) => { applyPosterize(ctx, w, h); },
+  pixelate: (ctx, w, h) => { applyPixelate(ctx, w, h); },
+  vhs:      (ctx, w, h) => { applyVHS(ctx, w, h); },
+  noise:    (ctx, w, h) => { applyNoiseVignette(ctx, w, h, 1); },
+  noise2:   (ctx, w, h) => { applyNoiseVignette(ctx, w, h, 2.5); },
+  ink:      (ctx, w, h) => { applyInk(ctx, w, h); },
+  mosaic:   (ctx, w, h) => { applyMosaic(ctx, w, h); },
+  duotone:  (ctx, w, h) => { applyDuotone(ctx, w, h); },
+};
+
+function renderEffect(img, effectId, canvas) {
+  const SZ = 320;
+  canvas.width = SZ; canvas.height = SZ;
+  const ctx = canvas.getContext('2d');
+  // Draw image centered + cropped square
+  const minDim = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+  const sx = ((img.naturalWidth || img.width) - minDim) / 2;
+  const sy = ((img.naturalHeight || img.height) - minDim) / 2;
+  ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, SZ, SZ);
+  // Mirror
+  ctx.save();
+  ctx.translate(SZ / 2, 0);
+  ctx.scale(-1, 1);
+  ctx.translate(-SZ / 2, 0);
+  ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, SZ, SZ);
+  ctx.restore();
+  // Grayscale base for most effects
+  if (effectId !== 'duotone' && effectId !== 'glitch' && effectId !== 'vhs') {
+    applyBW(ctx, SZ, SZ);
+  }
+  // Apply effect
+  const fn = EFFECT_FN[effectId];
+  if (fn) fn(ctx, SZ, SZ);
+}
+
+// ─── Build UI ────────────────────────────────────────────
+function buildGrid(img) {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  cards = [];
+  for (const ef of EFFECTS) {
+    const card = document.createElement('div');
+    card.className = 'card' + (ef.id === selectedEffect ? ' selected' : '');
+    card.dataset.id = ef.id;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 320; canvas.height = 320;
+    renderEffect(img, ef.id, canvas);
+
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = ef.label;
+
+    card.appendChild(canvas);
+    card.appendChild(label);
+    card.addEventListener('click', () => selectEffect(ef.id));
+    grid.appendChild(card);
+    cards.push(card);
+  }
+}
+
+function selectEffect(id) {
+  selectedEffect = id;
+  for (const card of cards) {
+    card.classList.toggle('selected', card.dataset.id === id);
+  }
+  document.getElementById('apply-btn').style.display = 'block';
+}
+
+// ─── File handling ───────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadFile(file);
+});
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      sourceImg = img;
+      document.getElementById('original-preview').src = e.target.result;
+      document.getElementById('original-preview').style.display = 'block';
+      document.getElementById('drop-text').textContent = '✓ Foto cargada — hacé click para cambiar';
+      document.getElementById('status').textContent = `Imagen: ${file.name} (${img.naturalWidth}×${img.naturalHeight})`;
+      buildGrid(img);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ─── Init with test image ───────────────────────────────
+const testCanvas = generateTestImage();
+const testImg = new Image();
+testImg.src = testCanvas.toDataURL();
+testImg.onload = () => {
+  sourceImg = testImg;
+  document.getElementById('status').textContent = 'Usando imagen de prueba. Arrastrá una foto para ver los efectos aplicados.';
+  buildGrid(testImg);
+};
+
+// ─── Apply button ───────────────────────────────────────
+document.getElementById('apply-btn').addEventListener('click', () => {
+  // Copy the selected effect's canvas to clipboard or log
+  const card = cards.find(c => c.dataset.id === selectedEffect);
+  if (card) {
+    const canvas = card.querySelector('canvas');
+    canvas.toBlob(blob => {
+      navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]).then(() => {
+        document.getElementById('apply-btn').textContent = '✓ Copiado al portapapeles';
+        setTimeout(() => {
+          document.getElementById('apply-btn').textContent = '✓ Aplicar efecto seleccionado';
+        }, 2000);
+      }).catch(() => {
+        // Fallback: open in new tab
+        const w = window.open();
+        w.document.write('<img src="' + canvas.toDataURL() + '" />');
+        w.document.write('<p>Efecto: ' + selectedEffect + '</p>');
+      });
+    });
+  }
+});
+</script>
+</body>
+</html>

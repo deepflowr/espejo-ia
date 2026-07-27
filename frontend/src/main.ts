@@ -13,7 +13,7 @@ import { createFaceFragments } from './layers/face-fragments';
 import { WORD_BANK } from './data/word-bank';
 import { FaceTracker } from './layers/face-tracker';
 import { WsClient } from './websocket-client';
-import { DIALOGS } from './data/dialogs';
+import { WELCOME_TEXT, WELCOME_HINT, WAVE_SVG, CHECK_SVG } from './data/dialogs';
 import { createRevealMesh } from './layers/lectura-reveal';
 import { createFaceAssembly } from './layers/face-assembly';
 import { createAnalysisHUD } from './layers/analysis-hud';
@@ -770,6 +770,273 @@ function destroyDescriptionSprites() {
   descSprites = [];
 }
 
+// ─── Question sprites — float during thinking phase ──
+const QUESTIONS = [
+  '¿Qué edad tiene esta persona?',
+  '¿Color de sus ojos?',
+  '¿Cómo es su cabello?',
+  '¿Qué expresión facial tiene?',
+  '¿Forma del rostro?',
+  '¿Tiene alguna marca distintiva?',
+  '¿Cómo viste?',
+  '¿Qué tono de piel?',
+  '¿Cejas finas o gruesas?',
+  '¿Labios finos o carnosos?',
+  '¿Nariz recta o aguileña?',
+  '¿Estructura ósea marcada?',
+  '¿Iluminación de la escena?',
+  '¿Fondo claro u oscuro?',
+  '¿El mentón es marcado?',
+  '¿Pómulos altos o bajos?',
+  '¿Arco de las cejas?',
+  '¿La mirada es directa?',
+  '¿Sonrisa o gesto serio?',
+  '¿Hay accesorios visibles?',
+];
+let questionSprites: DescSprite[] = [];
+const QUESTION_TOTAL = 30;
+
+function spawnQuestionSprite() {
+  const line = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
+  const tex = makeDescTexture(line, 0);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
+  const sprite = new THREE.Sprite(mat);
+  const ghostMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
+  const ghost = new THREE.Sprite(ghostMat);
+  const zDepth = -0.3 - Math.random() * 5;
+  const spread = -zDepth * (0.12 + Math.random() * 0.5);
+  const angle = Math.random() * Math.PI * 2;
+  const bp = new THREE.Vector3(Math.cos(angle) * spread, Math.sin(angle) * spread * 0.5, zDepth);
+  const s = 0.015 + Math.random() * 0.02;
+  sprite.position.copy(bp);
+  sprite.scale.set(s * 16, s, 1);
+  sprite.renderOrder = 8;
+  ghost.position.copy(bp);
+  ghost.position.x += 0.003;
+  ghost.position.y += 0.001;
+  ghost.scale.set(s * 16.5, s * 1.05, 1);
+  ghost.renderOrder = 7;
+  scene.add(sprite);
+  scene.add(ghost);
+  questionSprites.push({
+    sprite, ghost, text: line,
+    visibleChars: 0, charSpeed: 2 + Math.random() * 4,
+    phase: Math.random() * Math.PI * 2,
+    life: 0, state: 'typing',
+    basePos: bp.clone(),
+    vel: new THREE.Vector3((Math.random() - 0.5) * 0.0002, (Math.random() - 0.5) * 0.0002, 0),
+  });
+}
+
+function destroyQuestionSprites() {
+  for (const qs of questionSprites) {
+    scene.remove(qs.sprite);
+    scene.remove(qs.ghost);
+    qs.sprite.material.map?.dispose();
+    qs.sprite.material.dispose();
+    qs.ghost.material.map?.dispose();
+    qs.ghost.material.dispose();
+  }
+  questionSprites = [];
+}
+
+// ─── Floating face snapshots (during thinking/descripcion phase) ──
+interface FaceSnapshot {
+  mesh: THREE.Mesh;
+  ghost: THREE.Mesh;
+  phase: number;
+  life: number;
+  state: 'rising' | 'drifting' | 'fading';
+  basePos: THREE.Vector3;
+  vel: THREE.Vector3;
+  rotSpeed: THREE.Vector3;
+  ghostOffset: THREE.Vector3;
+  glitchTimer: number;
+}
+let faceSnapshots: FaceSnapshot[] = [];
+let faceSnapshotTex: THREE.CanvasTexture | null = null;
+const FACE_SNAPSHOT_COUNT = 100;
+
+function makeCannySnapshotTexture(img: HTMLImageElement): THREE.CanvasTexture {
+  const border = 10;
+  const size = 320;
+  const c = document.createElement('canvas');
+  c.width = size + border * 2;
+  c.height = size + border * 2;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.shadowColor = 'rgba(0,0,0,0.2)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetX = 1;
+  ctx.shadowOffsetY = 1;
+  ctx.save();
+  ctx.translate(c.width / 2, 0);
+  ctx.scale(-1, 1);
+  ctx.translate(-c.width / 2, 0);
+  ctx.filter = 'grayscale(100%) contrast(1.5) brightness(1.2)';
+  ctx.drawImage(img, border, border, size, size);
+  ctx.restore();
+  ctx.shadowColor = 'transparent';
+  const imgData = ctx.getImageData(border, border, size, size);
+  const d = imgData.data;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      if (y % 2 === 0) {
+        d[i] = 0; d[i+1] = 0; d[i+2] = 0;
+      } else if (y % 4 === 1) {
+        d[i] *= 0.3; d[i+1] *= 0.3; d[i+2] *= 0.3;
+      }
+    }
+  }
+  ctx.putImageData(imgData, border, border);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function applyCannyToFaceSnapshots() {
+  if (!cannyEdgeBase64) return;
+  const img = new Image();
+  img.onload = () => {
+    const newTex = makeCannySnapshotTexture(img);
+    // Update all existing face snapshot materials
+    for (const fs of faceSnapshots) {
+      (fs.mesh.material as THREE.MeshBasicMaterial).map = newTex;
+      (fs.mesh.material as THREE.MeshBasicMaterial).needsUpdate = true;
+      (fs.ghost.material as THREE.MeshBasicMaterial).map = newTex;
+      (fs.ghost.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    }
+    // Update shared texture reference for future spawns
+    if (faceSnapshotTex) faceSnapshotTex.dispose();
+    faceSnapshotTex = newTex;
+  };
+  img.src = cannyEdgeBase64;
+}
+
+function makeFaceSnapshotTexture(src: string): Promise<THREE.CanvasTexture> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      const border = 10;
+      const size = 320;
+      c.width = size + border * 2;
+      c.height = size + border * 2;
+      const ctx = c.getContext('2d')!;
+      // White polaroid border
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(0, 0, c.width, c.height);
+      // Shadow
+      ctx.shadowColor = 'rgba(0,0,0,0.2)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 1;
+      // Mirror + black & white
+      ctx.save();
+      ctx.translate(c.width / 2, 0);
+      ctx.scale(-1, 1);
+      ctx.translate(-c.width / 2, 0);
+      ctx.filter = 'grayscale(100%) contrast(1.1)';
+      ctx.drawImage(img, border, border, size, size);
+      ctx.restore();
+      ctx.shadowColor = 'transparent';
+
+      // Strong scanlines effect
+      const imgData = ctx.getImageData(border, border, size, size);
+      const d = imgData.data;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 4;
+          if (y % 2 === 0) {
+            // Every 2nd row: completely black
+            d[i] = 0; d[i+1] = 0; d[i+2] = 0;
+          } else if (y % 4 === 1) {
+            // Intermediate rows: dim
+            d[i] *= 0.3; d[i+1] *= 0.3; d[i+2] *= 0.3;
+          }
+        }
+      }
+      ctx.putImageData(imgData, border, border);
+      const tex = new THREE.CanvasTexture(c);
+      tex.needsUpdate = true;
+      resolve(tex);
+    };
+    img.src = src;
+  });
+}
+
+const planeGeo = new THREE.PlaneGeometry(1, 1);
+
+function spawnFaceSnapshot() {
+  if (!faceSnapshotTex) return;
+  const mat = new THREE.MeshBasicMaterial({ map: faceSnapshotTex, transparent: true, depthWrite: false, opacity: 0 });
+  const mesh = new THREE.Mesh(planeGeo, mat);
+  const ghostMat2 = new THREE.MeshBasicMaterial({ map: faceSnapshotTex, transparent: true, depthWrite: false, opacity: 0 });
+  const ghost = new THREE.Mesh(planeGeo, ghostMat2);
+  // Mix of depths: some very close, some far
+  const zDepth = Math.random() < 0.2
+    ? -(0.08 + Math.random() * 0.3)   // 20% chance: very close (0.08–0.38)
+    : -(0.3 + Math.random() * 8);      // 80%: normal range (0.3–8.3)
+  const spread = -zDepth * (0.15 + Math.random() * 0.8);
+  const angle = Math.random() * Math.PI * 2;
+  const bp = new THREE.Vector3(Math.cos(angle) * spread, -0.8 + Math.random() * 1.6, zDepth);
+  const s = 0.025 + Math.random() * 0.055;
+  mesh.position.copy(bp);
+  mesh.scale.set(s * 1.2, s * 1.2, 1);
+  mesh.renderOrder = 6;
+  mesh.rotation.x = (Math.random() - 0.5) * 1.2;
+  mesh.rotation.y = (Math.random() - 0.5) * 1.2;
+  mesh.rotation.z = (Math.random() - 0.5) * 0.8;
+  const gox = (Math.random() - 0.5) * 0.02;
+  const goy = (Math.random() - 0.5) * 0.015;
+  ghost.position.copy(bp);
+  ghost.position.x += gox;
+  ghost.position.y += goy;
+  ghost.position.z += (Math.random() - 0.5) * 0.005;
+  ghost.scale.set(s * 1.2 * 1.02, s * 1.2 * 1.02, 1);
+  ghost.renderOrder = 5;
+  ghost.rotation.copy(mesh.rotation);
+  scene.add(mesh);
+  scene.add(ghost);
+  faceSnapshots.push({
+    mesh, ghost,
+    phase: Math.random() * Math.PI * 2,
+    life: 0,
+    state: 'rising',
+    basePos: bp.clone(),
+    vel: new THREE.Vector3((Math.random() - 0.5) * 0.0004, (Math.random() - 0.5) * 0.0004, 0),
+    rotSpeed: new THREE.Vector3((Math.random() - 0.5) * 0.0006, (Math.random() - 0.5) * 0.0008, (Math.random() - 0.5) * 0.0004),
+    ghostOffset: new THREE.Vector3(gox, goy, 0),
+    glitchTimer: 0.06 + Math.random() * 0.1,
+  });
+}
+
+function destroyFaceSnapshots() {
+  for (const fs of faceSnapshots) {
+    scene.remove(fs.mesh);
+    scene.remove(fs.ghost);
+    (fs.mesh.material as THREE.MeshBasicMaterial).dispose();
+    (fs.ghost.material as THREE.MeshBasicMaterial).dispose();
+  }
+  faceSnapshots = [];
+  if (faceSnapshotTex) {
+    faceSnapshotTex.dispose();
+    faceSnapshotTex = null;
+  }
+}
+
+async function startFaceSnapshots() {
+  destroyFaceSnapshots();
+  if (!capturedPhotoBase64) return;
+  faceSnapshotTex = await makeFaceSnapshotTexture(capturedPhotoBase64);
+  // Spawn initial batch
+  for (let i = 0; i < Math.min(40, FACE_SNAPSHOT_COUNT); i++) {
+    spawnFaceSnapshot();
+  }
+}
+
 // ─── LECTURA layers ────────────────────────────────────────────
 const revealMeshObj = createRevealMesh();
 scene.add(revealMeshObj.mesh);
@@ -781,6 +1048,12 @@ const promptBox = createPromptBox();
 let storedPromptES = '';
 let promptESReady = false;
 let promptESDeferred = false;
+let waitingDescWave = false; // after descripcion done, waiting for wave to advance
+let descWaveReadyTimer = 0;  // minimum time before wave is accepted
+let descCountdown = 0; // countdown timer for description generation
+// Post-wave phases: prompt_countdown → prompt_done → contours_countdown → contours_done
+let postWavePhase: '' | 'prompt_countdown' | 'prompt_done' | 'contours_countdown' | 'contours_done' = '';
+let postWaveTimer = 0;
 let cannyEdgeBase64: string | null = null;
 let waitingForCannyMorph = false;
 
@@ -817,7 +1090,9 @@ function enterLectura() {
   promptESDeferred = false;
   cannyEdgeBase64 = null;
   waitingForCannyMorph = false;
+  waitingDescWave = false;
   destroyDescriptionSprites();
+  destroyQuestionSprites();
 
   // Stop encuadre tracking
   encuadreActive = false;
@@ -838,6 +1113,7 @@ function enterLectura() {
   boxContainer.style.display = 'none';
   ovalContainer.style.display = 'none';
   encuadreTextEl.style.display = 'none';
+  encuadreHintEl.style.display = 'none';
   camArrowEl.style.display = 'none';
   captureGuideEl.style.display = 'none';
   const backdrop = document.getElementById('encuadre-backdrop');
@@ -875,96 +1151,76 @@ function enterLectura() {
     console.warn('Analysis HUD: null, cannot show photo');
   }
 
-  // Show waiting text below photo
-  const waitingEl = document.createElement('div');
-  waitingEl.id = 'lectura-waiting';
-  waitingEl.style.cssText = `
-    position: fixed;
-    top: calc(38% + min(55vh, 440px) / 2 + 16px);
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(85vw, 650px);
-    text-align: center;
-    font: 20px Consolas, "Courier New", monospace;
-    color: rgba(190, 200, 215, 0.8);
-    pointer-events: none;
-    z-index: 600;
-    padding: 10px 16px;
-    background: rgba(0, 0, 0, 0.35);
-    border-radius: 4px;
-    text-shadow: 0 0 12px rgba(0,0,0,0.95);
-    box-sizing: border-box;
-  `;
-  // Spinner + text structure
-  const waitingSpinner = document.createElement('span');
-  waitingSpinner.id = 'waiting-spinner';
-  waitingSpinner.style.cssText = 'display:inline-block;width:1.2em;text-align:right;margin-right:0.3em;';
-  waitingSpinner.textContent = '/';
-  const waitingText = document.createElement('span');
-  waitingText.id = 'waiting-text';
-  waitingText.textContent = 'Esperando descripción del modelo tras el espejo...';
-  waitingEl.appendChild(waitingSpinner);
-  waitingEl.appendChild(waitingText);
-  document.body.appendChild(waitingEl);
+  // Start floating face snapshots in background
+  startFaceSnapshots();
 
+  // Status text below photo — main line + countdown subtitle
+  const lecturaStatusEl = document.createElement('div');
+  lecturaStatusEl.id = 'lectura-status';
+  lecturaStatusEl.style.cssText = [
+    'position: fixed;',
+    'top: calc(32% + min(52vh, 400px) / 2 + 18px);',
+    'left: 50%;',
+    'transform: translateX(-50%);',
+    'text-align: center;',
+    'pointer-events: none;',
+    'z-index: 601;',
+  ].join('');
 
-  // Show thinking box after ~3.5s
+  const statusMain = document.createElement('div');
+  statusMain.id = 'lectura-status-main';
+  statusMain.style.cssText = [
+    'font: 18px Consolas, "Courier New", monospace;',
+    'font-style: italic;',
+    'color: rgb(220,210,120);',
+    'text-shadow: 0 0 12px rgba(0,0,0,0.95);',
+    'white-space: nowrap;',
+    'margin-bottom: 6px;',
+  ].join('');
+  statusMain.textContent = '> Describiendo a la persona frente al espejo...';
+
+  const statusSub = document.createElement('div');
+  statusSub.id = 'lectura-status-sub';
+  statusSub.style.cssText = [
+    'font: 14px Consolas, "Courier New", monospace;',
+    'font-style: italic;',
+    'color: rgba(200,190,140,0.7);',
+    'text-shadow: 0 0 10px rgba(0,0,0,0.9);',
+    'white-space: nowrap;',
+  ].join('');
+  descCountdown = 15;
+  statusSub.textContent = '> Tiempo restante estimado: 15s';
+
+  lecturaStatusEl.appendChild(statusMain);
+  lecturaStatusEl.appendChild(statusSub);
+  document.body.appendChild(lecturaStatusEl);
+
+  // Flush any chunks that arrived before processing
   setTimeout(() => {
-    if (appState === 'lectura') {
-      lecturaThinking.show();
-      lecturaThinking.startSpinner();
-      // Change waiting text when description box appears
-      waitingText.textContent = 'Describiendo a la persona frente al espejo...';
-      // Flush any chunks that arrived before the box was ready
-      if (pendingChunks.length > 0) {
-        for (const pc of pendingChunks) {
-          processStreamChunk(pc.channel, pc.delta, pc.done);
-        }
-        pendingChunks = [];
-      } else {
-        lecturaThinking.setStatus('enviando foto al modelo...');
+    if (appState === 'lectura' && pendingChunks.length > 0) {
+      for (const pc of pendingChunks) {
+        processStreamChunk(pc.channel, pc.delta, pc.done);
       }
-      // In debug mode, simulate description
-      if (LECTURA_DEBUG) {
-        const demoDesc = `* Género: Femenino
-* Edad aproximada: ~30 años
-* Etnia: Caucásica
-* Forma del rostro: Ovalada
-* Ojos: Marrones, forma almendrada, cejas finas y arqueadas
-* Nariz: Recta, tamaño mediano, perfil armonioso
-* Labios: Labios finos, comisuras ligeramente hacia arriba
-* Piel: Tono claro, textura uniforme, sin imperfecciones visibles
-* Cabello: Castaño oscuro, lacio, largo hasta los hombros
-* Expresión: Neutral, relajada
-* Iluminación/Ambiente: Iluminación frontal suave, fondo neutro oscuro
-* Ropa/Accessorios: No visible en el encuadre`;
-
-        lecturaThinking.appendLine('enviando foto al modelo');
-        lecturaThinking.setStatus('generando descripción...');
-
-        const descWords = demoDesc.split(' ');
-        let di = 0;
-        const descIv = setInterval(() => {
-          if (di < descWords.length) {
-            lecturaThinking.showDescription(descWords[di] + (di < descWords.length - 1 ? ' ' : ''));
-            descriptionBuffer += descWords[di] + (di < descWords.length - 1 ? ' ' : '');
-            di++;
-          } else {
-            clearInterval(descIv);
-            lecturaThinking.stopSpinner();
-            lecturaThinking.appendLine('descripción generada');
-            lecturaThinking.setStatus('Descripción finalizada correctamente');
-            lecturaThinking.descriptionDone(5000, () => {
-              // After box closes, create floating description sprites
-              createDescriptionSprites(demoDesc);
-              // Show next text (same as normal flow)
-              if (waitingText) waitingText.textContent = 'Generando prompt para la imagen...';
-            });
-          }
-        }, 50);
-      }
+      pendingChunks = [];
     }
-  }, 3500);
+    // In debug mode, simulate description arriving
+    if (LECTURA_DEBUG) {
+      const demoDesc = `* Género: Femenino\n* Edad aproximada: ~30 años\n* Etnia: Caucásica\n* Forma del rostro: Ovalada\n* Ojos: Marrones, forma almendrada\n* Nariz: Recta, tamaño mediano\n* Labios: Labios finos\n* Piel: Tono claro\n* Cabello: Castaño oscuro\n* Expresión: Neutral\n* Iluminación: Suave`;
+      lecturaThinking.show();
+      lecturaThinking.showDescription(demoDesc);
+      descriptionBuffer = demoDesc;
+      storedDescription = demoDesc;
+      streamPhase = 'done';
+      waitingDescWave = true;
+      const stDbgMain = document.getElementById('lectura-status-main');
+      if (stDbgMain) stDbgMain.textContent = '> Descripción lista. Generando prompt...';
+      promptESReady = true; // simulate prompt_es ready
+      setTimeout(() => {
+        const stDbg2 = document.getElementById('lectura-status-main');
+        if (stDbg2) stDbg2.innerHTML = '> Saludá con la mano para continuar ' + WAVE_SVG;
+      }, 2000);
+    }
+  }, 500);
 }
 
 function leaveLectura() {
@@ -980,17 +1236,23 @@ function leaveLectura() {
   promptESDeferred = false;
   cannyEdgeBase64 = null;
   waitingForCannyMorph = false;
+  waitingDescWave = false;
+  descWaveReadyTimer = 0;
+  postWavePhase = '';
+  postWaveTimer = 0;
   promptBox.hide();
   destroyDescriptionSprites();
-  // Clean up waiting text
-  const wt = document.getElementById('lectura-waiting');
-  if (wt) wt.remove();
+  destroyFaceSnapshots();
+  destroyQuestionSprites();
+
   // Restore REPOSO elements
   if (faceFragments) (faceFragments as any).setVisible(true);
   camCanvas.style.opacity = '';
   camCanvas.style.maskImage = '';
   statusEl.style.display = '';
   if (analysisHUD) analysisHUD.hide();
+  const lst = document.getElementById('lectura-status');
+  if (lst) lst.remove();
   // Keep thinking box visible for debugging
 }
 
@@ -1018,16 +1280,32 @@ dialogEl.id = 'face-dialog';
 dialogEl.style.cssText = [
   'position:fixed;pointer-events:none;z-index:1000;',
   'display:none;',
-  'background:rgba(0,0,0,0.88);',
+  'background:#000;',
   'border:1px solid rgba(255,255,255,0.12);',
   'border-radius:0;',
   'padding:16px 20px;',
   'width: min(85vw, 620px);',
   'box-shadow:0 8px 30px rgba(0,0,0,0.5),0 0 12px rgba(255,255,255,0.06);',
   'opacity:0;',
-  'transition:opacity 0.6s ease;',
+  'transition:opacity 0.6s ease, transform 0.6s ease;',
+  'transform:translateY(-20px);',
 ].join('');
 document.body.appendChild(dialogEl);
+
+// Dialog text
+// Dialog title (styled like prompt box)
+const dialogTitle = document.createElement('div');
+dialogTitle.style.cssText = [
+  'font:12px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'color:rgb(220,210,120);',
+  'margin-bottom:12px;',
+  'text-transform:uppercase;',
+  'letter-spacing:1px;',
+  'text-shadow:0 0 8px rgba(0,0,0,0.9);',
+].join('');
+dialogTitle.textContent = '> ESPEJO IA';
+dialogEl.appendChild(dialogTitle);
 
 // Dialog text
 const dialogContent = document.createElement('div');
@@ -1052,16 +1330,16 @@ document.head.appendChild(dialogAnimStyle);
 const dialogHint = document.createElement('div');
 dialogHint.id = 'dialog-hint-inside';
 dialogHint.style.cssText = [
-  'display:none;',
-  'margin-top:12px;',
-  'padding-top:10px;',
-  'border-top:1px solid rgba(255,255,255,0.06);',
-  'font:13px Consolas,"Courier New",monospace;',
+  'display:block;',
+  'margin-top:14px;',
+  'padding-top:12px;',
+  'border-top:1px solid rgba(255,255,255,0.15);',
+  'font:18px Consolas,"Courier New",monospace;',
   'font-style:italic;',
-  'color:rgba(140,160,190,0.5);',
-  'text-shadow:0 0 8px rgba(0,0,0,0.9);',
+  'color:rgb(220,210,120);',
+  'text-shadow:0 0 12px rgba(0,0,0,0.95);',
 ].join('');
-dialogHint.textContent = '👋 saluda con la mano para continuar';
+dialogHint.innerHTML = WELCOME_HINT + ' ' + WAVE_SVG;
 dialogEl.appendChild(dialogHint);
 // RGB ghosts for dialog box
 const dialogGhosts: HTMLDivElement[] = ['#ff0000','#00ff00','#0000ff'].map(color => {
@@ -1153,6 +1431,21 @@ encuadreTextEl.style.cssText = [
 ].join('');
 document.body.appendChild(encuadreTextEl);
 
+// Encuadre hint (dynamic position guidance below main text)
+const encuadreHintEl = document.createElement('div');
+encuadreHintEl.id = 'encuadre-hint';
+encuadreHintEl.style.cssText = [
+  'position:fixed;pointer-events:none;z-index:1000;',
+  'font:16px Consolas,"Courier New",monospace;',
+  'font-style:italic;',
+  'color:rgb(220,210,120);',
+  'text-shadow:0 0 20px rgba(0,0,0,0.5), 0 0 4px rgba(0,0,0,0.8);',
+  'white-space:nowrap;',
+  'display:none;text-align:center;width:100%;left:0;',
+  'transition:opacity 0.3s ease;',
+].join('');
+document.body.appendChild(encuadreHintEl);
+
 // ─── Encuadre countdown (above oval) ──────────────────────────
 const countdownEl = document.createElement('div');
 countdownEl.id = 'encuadre-countdown';
@@ -1169,13 +1462,13 @@ document.body.appendChild(camArrowEl);
 // ─── Bright overlay (outside oval only) ───────────────────────
 const brightEl = document.createElement('div');
 brightEl.id = 'encuadre-bright';
-brightEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.55);pointer-events:none;z-index:997;display:none';
+brightEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,225,190,0.45);pointer-events:none;z-index:997;display:none';
 document.body.appendChild(brightEl);
 
 // ─── Flash overlay (full white for capture) ───────────────────
 const flashEl = document.createElement('div');
 flashEl.id = 'encuadre-flash';
-flashEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;pointer-events:none;z-index:1002;display:none;opacity:0;transition:opacity 0.3s';
+flashEl.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,210,170,0.5);pointer-events:none;z-index:1002;display:none;opacity:0;transition:opacity 0.5s ease';
 document.body.appendChild(flashEl);
 
 function enterEncuadre() {
@@ -1185,10 +1478,10 @@ function enterEncuadre() {
   hintEl.style.display = 'none';
   // Signal orchestrator to advance to CAPTURA
   wsClient.send({ type: 'continue' });
-  // Face-sized oval guide
+  // Face-sized oval guide — bigger for better framing
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const ovalH = vh * 0.35;
+  const ovalH = vh * 0.44;
   const ovalW = ovalH * 0.72;
   encuadreOvalW = ovalW;
   encuadreOvalH = ovalH;
@@ -1305,6 +1598,7 @@ wsClient.onMessage = (data) => {
       boxContainer.style.display = 'none';
       ovalContainer.style.display = 'none';
       encuadreTextEl.style.display = 'none';
+      encuadreHintEl.style.display = 'none';
       camArrowEl.style.display = 'none';
       captureGuideEl.style.display = 'none';
       const backdrop = document.getElementById('encuadre-backdrop');
@@ -1319,6 +1613,15 @@ wsClient.onMessage = (data) => {
       enterLectura();
     } else if (data.state === 'REPOSO' && appState === 'lectura' && !LECTURA_DEBUG) {
       leaveLectura();
+    } else if (data.state === 'REPOSO' && appState === 'reposo') {
+      // Hide welcome dialog when returning to REPOSO
+      dialogActive = false;
+      dialogAllShown = false;
+      dialogWavePending = false;
+      encuadrePending = false;
+      dialogEl.style.display = 'none';
+      dialogEl.style.opacity = '0';
+      hintEl.style.display = 'none';
     }
     // For GENERACION+ states, stay in LECTURA visuals — don't revert to REPOSO
     if ((data.state === 'GENERACION' || data.state === 'REVELACION' || data.state === 'ESPEJO_ACTIVO') && appState === 'lectura') {
@@ -1330,7 +1633,9 @@ wsClient.onMessage = (data) => {
     capturedPhotoBase64 = `data:image/png;base64,${data.image_b64}`;
   }
   if (data.type === 'canny_ready') {
-    cannyEdgeBase64 = `data:image/png;base64,${data.image_b64}`;
+    cannyEdgeBase64 = data.image_b64 as string; // already includes data:image/png;base64, from orchestrator
+    // Replace face snapshot textures with canny edge
+    applyCannyToFaceSnapshots();
     if (waitingForCannyMorph) {
       doCannyMorph();
     }
@@ -1340,11 +1645,11 @@ wsClient.onMessage = (data) => {
     const delta = data.text_delta as string;
     const done = data.done as boolean;
 
-    // prompt_es and prompt_en always process immediately (not for thinking box)
-    if (ch === 'prompt_es' || ch === 'prompt_en') {
+    // Always process in lectura state — box DOM exists from module init
+    if (appState === 'lectura') {
       processStreamChunk(ch, delta, done);
     } else if (!document.getElementById('lectura-thinking')?.style.display || document.getElementById('lectura-thinking')!.style.display === 'none') {
-      // If thinking box not yet visible, buffer the chunk
+      // If not in lectura and box hidden, buffer the chunk
       pendingChunks.push({ channel: ch, delta, done });
     } else {
       processStreamChunk(ch, delta, done);
@@ -1358,8 +1663,6 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
   if (ch === 'thinking_es') {
     if (streamPhase === 'idle' && !done) {
       streamPhase = 'thinking';
-      lecturaThinking.appendLine('enviando foto al modelo');
-      lecturaThinking.setStatus('generando descripción...');
     }
     if (done && streamPhase === 'thinking') {
       streamPhase = 'descripcion';
@@ -1372,8 +1675,9 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
     if (streamPhase === 'idle' || streamPhase === 'descripcion' || streamPhase === 'thinking') {
       if (streamPhase === 'idle' || streamPhase === 'thinking') {
         streamPhase = 'descripcion';
-        lecturaThinking.appendLine('enviando foto al modelo');
-        lecturaThinking.setStatus('generando descripción...');
+        lecturaThinking.show();
+        const st3 = document.getElementById('lectura-status-main');
+        if (st3) st3.textContent = '> Descripción recibida';
       }
       if (delta) {
         lecturaThinking.showDescription(delta);
@@ -1381,26 +1685,16 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
       }
       if (done) {
         streamPhase = 'done';
-        lecturaThinking.stopSpinner();
-        lecturaThinking.appendLine('descripción generada');
-        lecturaThinking.setStatus('Descripción finalizada correctamente');
-        // Store full description for floating sprites
         storedDescription = descriptionBuffer;
-        // Keep open 6s so person can read, then close
-        lecturaThinking.descriptionDone(6000, () => {
-          // After box closes, create floating description sprites
-          if (storedDescription) {
-            createDescriptionSprites(storedDescription);
-          }
-          // Show next text
-          const wtEl = document.getElementById('waiting-text');
-          if (wtEl) wtEl.textContent = 'Generando prompt para la imagen...';
-          // If prompt_es arrived before descripcion finished, show prompt box now
-          if (promptESDeferred) {
-            promptESDeferred = false;
-            showPromptBoxDelayed();
-          }
-        });
+        // Reset wave flag so old waves don't carry over
+        dialogWavePending = false;
+        // Start floating description sprites immediately
+        createDescriptionSprites(storedDescription);
+        const st = document.getElementById('lectura-status-main');
+        if (st) st.textContent = '> Descripción lista. Generando prompt...';
+        waitingDescWave = true;
+        // Minimum 1.5s before accepting wave so user sees the message
+        descWaveReadyTimer = 1.5;
       }
     }
     return;
@@ -1410,12 +1704,16 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
   if (ch === 'prompt_es') {
     if (delta) storedPromptES += delta;
     if (done) {
+      console.log(`prompt_es complete: ${storedPromptES.length} chars, ends with: "${storedPromptES.slice(-50)}"`);
       promptESReady = true;
-      // If descripcion hasn't finished yet, defer prompt box until after description's reading time
+      // Update status if descripcion is also ready
+      if (waitingDescWave || streamPhase === 'done') {
+        const st = document.getElementById('lectura-status-main');
+        if (st) st.innerHTML = '> Saludá con la mano para continuar ' + WAVE_SVG;
+      }
+      // If descripcion hasn't finished yet, defer prompt box
       if (streamPhase !== 'done') {
         promptESDeferred = true;
-      } else {
-        showPromptBoxDelayed();
       }
     }
     return;
@@ -1426,34 +1724,33 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
   }
 }
 
-// Show prompt box with a short delay after description sprites appear
-function showPromptBoxDelayed() {
-  setTimeout(() => {
-    if (storedPromptES) {
-      promptBox.show(storedPromptES);
-    }
-    const wt3 = document.getElementById('waiting-text');
-    if (wt3) wt3.textContent = 'Creando contornos de la cara...';
-    // Wait for canny edge to arrive from ComfyUI, then morph and update text
-    waitingForCannyMorph = true;
-    if (cannyEdgeBase64) {
-      doCannyMorph();
-    }
-  }, 3000);
-}
-
 // Morph the captured photo into the canny edge contours
 function doCannyMorph() {
   waitingForCannyMorph = false;
   if (analysisHUD && cannyEdgeBase64) {
     const img = new Image();
     img.onload = () => {
-      analysisHUD!.setPhoto(img);
+      // CSS already mirrors (transform: scaleX(-1) on imgEl), pass raw
+      // Smooth cross-fade: fade out, swap, fade in
+      const photoOuter = document.getElementById('lectura-photo');
+      if (photoOuter) {
+        photoOuter.style.transition = 'opacity 0.3s ease';
+        photoOuter.style.opacity = '0';
+        setTimeout(() => {
+          analysisHUD!.setPhoto(img);
+          photoOuter.style.opacity = '1';
+          setTimeout(() => { photoOuter.style.transition = ''; }, 350);
+        }, 350);
+      } else {
+        analysisHUD!.setPhoto(img);
+      }
+      // Brief flash pulse via reveal mesh
+      revealMeshObj.trigger();
     };
     img.src = cannyEdgeBase64;
   }
-  const wt5 = document.getElementById('waiting-text');
-  if (wt5) wt5.textContent = 'Iniciando generación del reflejo';
+  const st5 = document.getElementById('lectura-status-main');
+  if (st5) st5.textContent = '> Enviando contornos y prompt...';
 }
 wsClient.connect();
 // Handle binary camera frames from vision service (via orchestrator)
@@ -1696,8 +1993,151 @@ function animate() {
 
       lecturaThinking.update(dt);
       promptBox.update(time, dt);
+
+      // Countdown timer for description generation (starts immediately on entering LECTURA)
+      if (streamPhase !== 'done') {
+        descCountdown -= dt;
+        const stSub = document.getElementById('lectura-status-sub');
+        if (stSub && descCountdown > 0) {
+          stSub.textContent = `> Tiempo restante estimado: ${Math.ceil(descCountdown)}s`;
+        } else if (stSub && descCountdown <= 0 && stSub.textContent.includes('Tiempo restante')) {
+          stSub.textContent = '> Capturando los últimos detalles...';
+        }
+      } else {
+        // Description complete — update subtitle once
+        const stSub = document.getElementById('lectura-status-sub');
+        if (stSub && (stSub.textContent.includes('Tiempo restante') || stSub.textContent.includes('Capturando'))) {
+          stSub.textContent = '> Descripción completada ✓';
+        }
+      }
+
+      // Wave advances from description-read state (with min timer)
+      if (descWaveReadyTimer > 0) descWaveReadyTimer -= dt;
+      if (waitingDescWave && dialogWavePending && descWaveReadyTimer <= 0) {
+        dialogWavePending = false;
+        waitingDescWave = false;
+        // Show "Saludo detectado" feedback
+        const stWave = document.getElementById('lectura-status-main');
+        if (stWave) {
+          stWave.innerHTML = CHECK_SVG + 'Saludo detectado';
+          stWave.style.color = '#4ade80';
+        }
+        lecturaThinking.hide();
+        // Start prompt countdown phase after brief delay
+        setTimeout(() => {
+          const st2 = document.getElementById('lectura-status-main');
+          if (st2) { st2.textContent = '> Generando prompt...'; st2.style.color = 'rgb(220,210,120)'; }
+          postWavePhase = 'prompt_countdown';
+          postWaveTimer = 2;
+        }, 600);
+      }
+
+      // Post-wave phase progression
+      if (postWavePhase === 'prompt_countdown') {
+        postWaveTimer -= dt;
+        const stSub = document.getElementById('lectura-status-sub');
+        if (stSub) stSub.textContent = `> Tiempo restante: ${Math.ceil(postWaveTimer)}s`;
+        if (postWaveTimer <= 0) {
+          postWavePhase = 'prompt_done';
+          postWaveTimer = 2;
+          const st3 = document.getElementById('lectura-status-main');
+          if (st3) { st3.textContent = '> Prompt completado ✓'; st3.style.color = '#4ade80'; }
+          // Show prompt box now
+          if (storedPromptES) promptBox.show(storedPromptES);
+          if (promptESDeferred) { promptESDeferred = false; }
+        }
+      } else if (postWavePhase === 'prompt_done') {
+        postWaveTimer -= dt;
+        const stSub = document.getElementById('lectura-status-sub');
+        if (stSub) stSub.textContent = `> Mostrando prompt — ${Math.ceil(postWaveTimer)}s`;
+        if (postWaveTimer <= 0) {
+          postWavePhase = 'contours_countdown';
+          postWaveTimer = 15;
+          const st4 = document.getElementById('lectura-status-main');
+          if (st4) { st4.textContent = '> Generando contornos de la cara...'; st4.style.color = 'rgb(220,210,120)'; }
+          waitingForCannyMorph = true;
+          if (cannyEdgeBase64) doCannyMorph();
+        }
+      } else if (postWavePhase === 'contours_countdown') {
+        postWaveTimer -= dt;
+        const stSub = document.getElementById('lectura-status-sub');
+        if (stSub) stSub.textContent = `> Tiempo estimado: ${Math.ceil(postWaveTimer)}s`;
+        if (postWaveTimer <= 0 || cannyEdgeBase64) {
+          postWavePhase = 'contours_done';
+          const st5 = document.getElementById('lectura-status-main');
+          if (st5) st5.textContent = '> Enviando contornos y prompt...';
+          const stSub2 = document.getElementById('lectura-status-sub');
+          if (stSub2) stSub2.textContent = '> Contornos recibidos ✓';
+          if (!cannyEdgeBase64) {
+            // Still waiting for canny
+            waitingForCannyMorph = true;
+          } else {
+            doCannyMorph();
+          }
+        }
+      }
     } catch (err) {
       console.warn('LECTURA update error:', err);
+    }
+  }
+
+  // ── Question sprites (during thinking phase) ──
+  if (appState === 'lectura' && (streamPhase === 'idle' || streamPhase === 'thinking')) {
+    if (questionSprites.length < QUESTION_TOTAL && Math.random() < 0.04) {
+      spawnQuestionSprite();
+    }
+  } else if (appState === 'lectura' && streamPhase !== 'idle' && streamPhase !== 'thinking' && questionSprites.length > 0) {
+    // Destroy questions when descripcion starts arriving
+    destroyQuestionSprites();
+  }
+
+  // Update question sprites (same lifecycle as desc sprites)
+  for (let i = questionSprites.length - 1; i >= 0; i--) {
+    const ds = questionSprites[i];
+    ds.life += dt;
+
+    if (ds.state === 'typing') {
+      ds.visibleChars = Math.min(ds.text.length, ds.visibleChars + ds.charSpeed * dt * 30);
+      const progress = ds.visibleChars / ds.text.length;
+      const tex = makeDescTexture(ds.text, progress);
+      (ds.sprite.material as THREE.SpriteMaterial).map = tex;
+      (ds.sprite.material as THREE.SpriteMaterial).needsUpdate = true;
+      (ds.ghost.material as THREE.SpriteMaterial).map = tex;
+      (ds.ghost.material as THREE.SpriteMaterial).needsUpdate = true;
+      // Dimmer/cyan tint for questions
+      ds.sprite.material.opacity = Math.min(0.35, ds.life * 2);
+      ds.ghost.material.opacity = ds.sprite.material.opacity * 0.2;
+      if (ds.visibleChars >= ds.text.length) ds.state = 'display';
+    } else if (ds.state === 'display') {
+      if (ds.life > 4 + Math.random() * 3) ds.state = 'fading';
+      ds.sprite.material.opacity = 0.35 * (1 - Math.max(0, (ds.life - 4) / 3));
+      ds.ghost.material.opacity = ds.sprite.material.opacity * 0.2;
+    } else if (ds.state === 'fading') {
+      ds.sprite.material.opacity *= 0.95;
+      ds.ghost.material.opacity *= 0.95;
+      if (ds.sprite.material.opacity < 0.01) {
+        scene.remove(ds.sprite); scene.remove(ds.ghost);
+        ds.sprite.material.dispose(); ds.ghost.material.dispose();
+        questionSprites.splice(i, 1);
+        continue;
+      }
+    }
+    // Drift
+    ds.basePos.x += ds.vel.x + Math.sin(Date.now() * 0.0003 + ds.phase) * 0.00015;
+    ds.basePos.y += ds.vel.y + Math.cos(Date.now() * 0.0004 + ds.phase) * 0.00015;
+    ds.sprite.position.copy(ds.basePos);
+    ds.ghost.position.copy(ds.basePos);
+    ds.ghost.position.x += 0.003;
+    ds.ghost.position.y += 0.001;
+    // Subtle RGB glitch
+    if (Math.random() < 0.005) {
+      const gc = [new THREE.Color(1,0,0), new THREE.Color(0,1,0), new THREE.Color(0,0,1)][Math.floor(Math.random() * 3)];
+      (ds.ghost.material as THREE.SpriteMaterial).color.copy(gc);
+    } else {
+      const gm = ds.ghost.material as THREE.SpriteMaterial;
+      gm.color.r += (1 - gm.color.r) * 0.06;
+      gm.color.g += (1 - gm.color.g) * 0.06;
+      gm.color.b += (1 - gm.color.b) * 0.06;
     }
   }
 
@@ -1760,6 +2200,72 @@ function animate() {
     }
   }
 
+  // ── Floating face snapshots (throughout LECTURA) ──
+  if (appState === 'lectura' && faceSnapshotTex) {
+    if (faceSnapshots.length < FACE_SNAPSHOT_COUNT && Math.random() < 0.06) {
+      spawnFaceSnapshot();
+    }
+  }
+
+  for (let i = faceSnapshots.length - 1; i >= 0; i--) {
+    const fs = faceSnapshots[i];
+    const fm = fs.mesh.material as THREE.MeshBasicMaterial;
+    const fg = fs.ghost.material as THREE.MeshBasicMaterial;
+    fs.life += dt;
+
+    if (fs.state === 'rising') {
+      fm.opacity = Math.min(0.5, fs.life * 1.2);
+      fg.opacity = fm.opacity * 0.3;
+      if (fs.life > 2) fs.state = 'drifting';
+    } else if (fs.state === 'drifting') {
+      if (fs.life > 14 + Math.random() * 8) {
+        fs.state = 'fading';
+      }
+      fm.opacity = 0.5 * (1 - Math.max(0, (fs.life - 14) / 6));
+      fg.opacity = fm.opacity * 0.3;
+    } else if (fs.state === 'fading') {
+      fm.opacity *= 0.96;
+      fg.opacity *= 0.96;
+      if (fm.opacity < 0.01) {
+        scene.remove(fs.mesh); scene.remove(fs.ghost);
+        fm.dispose(); fg.dispose();
+        faceSnapshots.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Drift in 3D space
+    fs.basePos.x += fs.vel.x + Math.sin(Date.now() * 0.0004 + fs.phase) * 0.0003;
+    fs.basePos.y += fs.vel.y + Math.cos(Date.now() * 0.0005 + fs.phase) * 0.0003;
+    fs.basePos.z += Math.sin(Date.now() * 0.0003 + fs.phase * 0.7) * 0.0002;
+    fs.mesh.position.copy(fs.basePos);
+    // 3D rotation drift
+    fs.mesh.rotation.x += fs.rotSpeed.x * dt * 60;
+    fs.mesh.rotation.y += fs.rotSpeed.y * dt * 60;
+    fs.mesh.rotation.z += fs.rotSpeed.z * dt * 60;
+    fs.ghost.rotation.copy(fs.mesh.rotation);
+    // ── Wireframe-style RGB glitch ──
+    fs.glitchTimer -= dt;
+    if (fs.glitchTimer <= 0) {
+      const c = [new THREE.Color(1,0,0), new THREE.Color(0,1,0), new THREE.Color(0,0,1)][Math.floor(Math.random() * 3)];
+      fg.color.copy(c);
+      fs.ghost.position.set(
+        fs.basePos.x + (Math.random() - 0.5) * 0.025,
+        fs.basePos.y + (Math.random() - 0.5) * 0.025,
+        fs.basePos.z
+      );
+      fs.glitchTimer = 0.06 + Math.random() * 0.1;
+    }
+    // Recover ghost color back to gray
+    fg.color.r += (0.15 - fg.color.r) * 0.12;
+    fg.color.g += (0.15 - fg.color.g) * 0.12;
+    fg.color.b += (0.15 - fg.color.b) * 0.12;
+    // Ghost follows mesh with smooth blur wobble
+    const bOff = Math.sin(Date.now() * 0.001 + fs.phase) * 0.003;
+    fs.ghost.position.x += (fs.basePos.x + bOff - fs.ghost.position.x) * 0.05;
+    fs.ghost.position.y += (fs.basePos.y + bOff * 0.5 - fs.ghost.position.y) * 0.05;
+  }
+
   // ── Draw camera frame to DOM canvas ──
   faceTracker.update(dt);
   if (pendingFrame) {
@@ -1789,12 +2295,13 @@ function animate() {
   }
   // ── Camera frame to DOM canvas ──
   if (appState === 'lectura') {
-    // During LECTURA: draw full frame at very low opacity (no face reveal)
+    // During LECTURA: higher opacity when waiting for wave so hand tracking is visible
     if (frameImg) {
+      const camOpacity = waitingDescWave ? '0.35' : '0.2';
       camCanvas.style.maskImage = 'none';
-      camCanvas.style.opacity = '0.2';
+      camCanvas.style.opacity = camOpacity;
       camCtx.clearRect(0, 0, vw, vh);
-      camCtx.globalAlpha = 0.2;
+      camCtx.globalAlpha = parseFloat(camOpacity);
       camCtx.drawImage(frameImg, 0, 0, vw, vh);
       camCtx.globalAlpha = 1.0;
     }
@@ -1921,6 +2428,24 @@ function animate() {
       }
       encuadreTextEl.style.color = 'rgba(230,235,245,0.9)';
       encuadreTextEl.textContent = targetText.slice(0, Math.floor(encuadreTypingChars)) + (encuadreTypingChars < targetText.length ? '▊' : '');
+      // Dynamic position hint below main text
+      let hint = '';
+      if (!sizeOk) {
+        hint = sizeRatio < 0.92 ? '> Acercate a la cámara' : '> Alejate un poco';
+      } else if (dist >= alignThreshold) {
+        const dx = faceX - centerX;
+        const dy = faceY - centerY;
+        if (Math.abs(dx) > Math.abs(dy)) {
+          hint = dx > 0 ? '> Movete un poco a la derecha' : '> Movete un poco a la izquierda';
+        } else {
+          hint = dy > 0 ? '> Subí un poco' : '> Bajá un poco';
+        }
+      } else {
+        hint = '> Perfecto, mantenete así';
+      }
+      encuadreHintEl.textContent = hint;
+      encuadreHintEl.style.display = 'block';
+      encuadreHintEl.style.top = (parseFloat(encuadreTextEl.style.top) + 32) + 'px';
       // Check if aligned (position + size)
       if (dist < alignThreshold && sizeOk) {
         encuadreAlignedTimer += dt;
@@ -2004,16 +2529,16 @@ function animate() {
         countdownEl.style.display = 'none';
         flashEl.style.display = 'block';
         flashEl.style.opacity = '1';
-        // Send crop as fraction of viewport (0-1), vision service converts to image pixels
+        // Crop based on oval size (viewport-proportional)
         const cropNorm = encuadreOvalH / vw;
-        // Send crop with upward shift to match the visible oval
+        // Upward shift to match visible oval
         const shiftNorm = (encuadreOvalH / vh) * 0.13;
         wsClient.send({ type: 'capture_photo', crop_center_x: p.x, crop_center_y: p.y - shiftNorm, crop_size: cropNorm });
-        // Fade flash out after 300ms
+        // Keep flash on for 1.5s so the camera captures the screen-lit face
         setTimeout(() => {
           flashEl.style.opacity = '0';
-          setTimeout(() => { flashEl.style.display = 'none'; }, 300);
-        }, 300);
+          setTimeout(() => { flashEl.style.display = 'none'; }, 500);
+        }, 1500);
         // Reset for now
         encuadrePhase = 'position';
         encuadreCapturing = false;
@@ -2029,26 +2554,26 @@ function animate() {
         countdownEl.textContent = String(encuadreCountdownValue);
       }
     }
-  } else if (!encuadreActive) {
+  }
+  if (!encuadreActive) {
     ovalContainer.style.display = 'none';
     captureGuideEl.style.display = 'none';
   }
 
-  // ── Dialog (follows face, each box fades out before next fades in) ──
+  // ── Welcome box (follows face, slide-up entrance, wave advances) ──
   if (hasFace && !encuadreActive && appState !== 'lectura') {
     if (!dialogActive) {
       dialogActive = true;
-      dialogIndex = 0;
-      dialogAllShown = false;
-      dialogFullText = DIALOGS[0];
-      dialogCleanText = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
-      dialogAutoAdvanceSet = false;
-      dialogFadeTimer = 0;
-      // Show first dialog with fade in
-      dialogContent.textContent = dialogCleanText;
+      dialogAllShown = true;
+      dialogContent.textContent = WELCOME_TEXT;
+      dialogHint.innerHTML = WELCOME_HINT + ' ' + WAVE_SVG;
       dialogEl.style.display = 'block';
+      dialogEl.style.transform = 'translateY(20px)';
       dialogEl.style.opacity = '0';
-      requestAnimationFrame(() => { dialogEl.style.opacity = '1'; });
+      requestAnimationFrame(() => {
+        dialogEl.style.transform = 'translateY(0)';
+        dialogEl.style.opacity = '1';
+      });
     }
     // Position below the face box (follows bounding box)
     const sD = faceTracker.smoothedSize;
@@ -2066,83 +2591,35 @@ function animate() {
     dialogEl.style.left = dialogX + 'px';
     dialogEl.style.top = dialogY + 'px';
 
-    // Hint: only show after all dialogs are done
-    if (dialogAllShown) {
-      dialogHint.style.display = 'block';
-      hintFlashTimer = Math.max(0, hintFlashTimer - dt);
-      if (hintFlashTimer > 0) {
-        dialogHint.textContent = '✓ saludo detectado';
-        dialogHint.style.color = '#4ade80';
-        dialogHint.style.borderTopColor = 'rgba(74,222,128,0.2)';
-      } else {
-        dialogHint.textContent = '👋 saluda con la mano para continuar';
-        dialogHint.style.color = 'rgba(140,160,190,0.5)';
-        dialogHint.style.borderTopColor = 'rgba(255,255,255,0.06)';
-      }
-    } else {
-      dialogHint.style.display = 'none';
-    }
-
-    if (dialogFadeTimer > 0) {
-      // Waiting for fade-out to complete, then advance
-      dialogFadeTimer -= dt;
-      if (dialogFadeTimer <= 0) {
-        dialogFadeTimer = 0;
-        dialogIndex++;
-        dialogFullText = DIALOGS[dialogIndex];
-        dialogCleanText = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
-        dialogContent.textContent = dialogCleanText;
-        dialogEl.style.opacity = '1'; // fade in new box
-        dialogAutoAdvanceSet = false;
-      }
-    } else if (!dialogAllShown) {
-      // Show current text
-      const cleanDisplay = dialogFullText.replace(/\|\|/g, '').replace(/\|\d+(?:\.\d+)?\|/g, '');
-      if (dialogContent.textContent !== cleanDisplay) {
-        dialogContent.textContent = cleanDisplay;
-      }
-
-      // Auto-advance timer
-      if (!dialogAutoAdvanceSet) {
-        dialogAutoAdvanceSet = true;
-        const textLen = cleanDisplay.length;
-        dialogAutoTimer = Math.max(4, Math.min(12, 4 + textLen / 30));
-      }
-      if (dialogAutoTimer > 0) {
-        dialogAutoTimer -= dt;
-        if (dialogAutoTimer <= 0) {
-          dialogAutoTimer = 0;
-          if (dialogIndex >= DIALOGS.length - 1) {
-            // Last dialog — keep box visible, switch to hint
-            dialogAllShown = true;
-            dialogWavePending = false;
-          } else {
-            // Start fade-out for next dialog
-            dialogEl.style.opacity = '0';
-            dialogFadeTimer = 0.55;
-          }
-        }
-      }
-    }
-
-    // Wave gesture advances from the hint screen
-    if (dialogAllShown && dialogCooldown > 0) {
-      dialogCooldown -= dt;
-    } else if (dialogAllShown && dialogWavePending && !encuadrePending) {
-      dialogWavePending = false;
-      encuadrePending = true;
-      hintFlashTimer = 1.5;
-      dialogHint.textContent = '✓ saludo detectado';
+    // Hint always visible
+    dialogHint.style.display = 'block';
+    hintFlashTimer = Math.max(0, hintFlashTimer - dt);
+    if (hintFlashTimer > 0) {
+      dialogHint.innerHTML = CHECK_SVG + 'Saludo detectado';
       dialogHint.style.color = '#4ade80';
       dialogHint.style.borderTopColor = 'rgba(74,222,128,0.2)';
-      // Brief pause so user sees the green text, then enter encuadre
-      setTimeout(() => {
-        encuadrePending = false;
-        enterEncuadre();
-      }, 500);
+    } else {
+      dialogHint.innerHTML = WELCOME_HINT + ' ' + WAVE_SVG;
+      dialogHint.style.color = 'rgb(220,210,120)';
+      dialogHint.style.borderTopColor = 'rgba(255,255,255,0.15)';
+    }
+
+    // Wave gesture advances
+    if (dialogCooldown > 0) {
+      dialogCooldown -= dt;
+    } else if (dialogWavePending && !encuadrePending) {
+      dialogWavePending = false;
+      dialogAllShown = false;
+      encuadrePending = true;
+      dialogHint.innerHTML = CHECK_SVG + 'Saludo detectado';
+      dialogHint.style.color = '#4ade80';
+      dialogHint.style.borderTopColor = 'rgba(74,222,128,0.2)';
+      dialogEl.style.display = 'none';
+      encuadrePending = false;
+      enterEncuadre();
     }
     // Reset absence timer when face is present
-    dialogAbsenceTimer = 4.0; // grace period
+    dialogAbsenceTimer = 4.0;
   } else {
     // Don't reset immediately on face loss — wait a few seconds
     if (dialogActive || dialogAllShown) {
@@ -2238,15 +2715,7 @@ function animate() {
     }
   }
 
-  // ── Spinner animation for waiting text ──
-  waitingSpinnerTick += dt;
-  if (waitingSpinnerTick > 0.1) {
-    waitingSpinnerTick = 0;
-    const frames = ['|', '/', '-', '\\'];
-    const idx = Math.floor(time * 10) % frames.length;
-    const sp = document.getElementById('waiting-spinner');
-    if (sp) sp.textContent = frames[idx];
-  }
+
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
