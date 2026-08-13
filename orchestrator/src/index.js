@@ -51,7 +51,7 @@ function broadcastBinary(buffer) {
 }
 
 // When state changes, tell all connected frontends
-stateMachine.onChange((newState) => {
+stateMachine.onChange((newState, prev) => {
   broadcast({ type: 'state', state: newState });
 
   if (newState === STATES.CAPTURA) {
@@ -103,6 +103,12 @@ stateMachine.onChange((newState) => {
         // onComplete
         (result) => {
           console.log('=== ComfyUI full pipeline complete ===');
+          // Replay the denoise progression (noise → final) to the frontend
+          if (result.steps && result.steps.length) {
+            result.steps.forEach((sb64, i) => {
+              broadcast({ type: 'gen_preview', image_b64: sb64, step: i + 1, total_steps: result.steps.length });
+            });
+          }
           if (result.portrait_b64) {
             sessionStore.set(currentSessionId, 'portrait', result.portrait_b64);
             broadcast({ type: 'final_portrait', image_b64: result.portrait_b64 });
@@ -131,6 +137,23 @@ stateMachine.onChange((newState) => {
     } else {
       console.warn('GENERACION — no session or photo found');
     }
+  }
+
+  if (newState === STATES.ESPEJO_ACTIVO) {
+    // Start the live face swap with the generated portrait as source
+    const session = sessionStore.get(currentSessionId);
+    if (session && session.portrait) {
+      console.log('ESPEJO_ACTIVO — starting face swap');
+      visionClient.send({ type: 'start_swap', image_b64: session.portrait });
+    } else {
+      console.warn('ESPEJO_ACTIVO — no portrait in session, swap will not start');
+    }
+  }
+
+  // Stop the swap when leaving ESPEJO_ACTIVO (SOUVENIR / CIERRE / REPOSO)
+  if (prev === STATES.ESPEJO_ACTIVO && newState !== STATES.ESPEJO_ACTIVO) {
+    console.log('Leaving ESPEJO_ACTIVO — stopping face swap');
+    visionClient.send({ type: 'stop_swap' });
   }
 
   if (newState === STATES.REPOSO) {

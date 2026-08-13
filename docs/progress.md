@@ -122,11 +122,85 @@ espejo/
 9. **Waiting Text Flow Refined** — Text #2 now triggers when thinking box appears (not on chunk arrival). Demo fallback removed.
 10. **Extracted Panda Eye Masks** — `left-eye-panda.glb` / `right-eye-panda.glb` (3611 tris each) with wider vertical coverage for blink animation.
 
+### 2026-07-27 — Cámara 4K + fixes
+
+- **Camera:** Raptor Vision ahora configurada a 2160×3840 (4K UHD portrait) vía MJPG + MSMF (sin DShow). CAMERA_INDEX=1.
+- **RAM Cleanup desactivado** en `EspejoIA_image.json` (nodo 9). Modelos de Z-Image Turbo quedan en VRAM.
+- **Traducción (prompt_es):** `max_tokens` de 256→1024 en `EspejoIA_Qwen text generation.json` (nodo 8). Ya no se corta.
+- **Fix UI:** Mensaje "Saludá con la mano para continuar 👋" ahora aparece aunque `prompt_es` llegue antes que `descripcion` en el stream.
+
+### 2026-08-12 — Sistema de revelación + consistencia del feed
+
+**Workflow de imagen (`EspejoIA_image.json`):**
+- Prefijos de SaveImage renombrados: nodo 10 = `Espejo_Final` (retrato completo), nodo 60 = `Espejo_Step` (pasos intermedios del denoise), nodo 56 = `Canny` (contornos).
+- **RAM Cleanup desactivado en TODOS los nodos** (9 y 61) — Z-Image Turbo queda en VRAM entre corridas.
+
+**Orquestador (`orchestrator/src/services/comfyui.js`):**
+- Selección del retrato final por prefijo `Espejo_Final` + `type === 'output'`. Antes agarraba el `temp` del `PreviewImage` (paso intermedio) → la imagen se veía "sin terminar".
+- Captura de previews de denoise: parseo de frames binarios `bpreview` de ComfyUI (formato `[uint32 len][uint32 len][json][json][png]`) + replay de `Espejo_Step` ordenados por filename. Se transmiten como `gen_preview`.
+- `final_portrait` ahora es el retrato final real.
+
+**Frontend — REVELACION (implementado de cero):**
+- Etapa **transparente** (sin overlay negro): se ve el reflejo de la persona a opacidad 0.4.
+- Título "> Generando tu reflejo..." + sub "> Paso X / N".
+- Polaroid central grande (`78vw/600px`) que **recorre todos los pasos** del denoise (noise → final).
+- El fondo **acumula polaroids** de cada paso (flotando junto a las del canny).
+- Al final: **flash** cálido, todas las polaroids del fondo se convierten en la imagen final, y se muestran **dos polaroids apiladas**: "> TU CARA" (amarillo, foto original) y "> REFLEJO GENERADO" (verde, imagen generada) + "> Saludá para conocer a tu reflejo". Tamaño final 62vw/420px.
+
+**UI / LECTURA:**
+- Cajas de hint "Saludá para continuar 👋" debajo de la **descripción** y debajo del **prompt** (esta última solo aparece cuando el retrato está listo — nunca antes).
+- Contadores y texto de estado ocultos al entrar a la revelación.
+- Opacidad del feed de cámara **consistente**: 0.3 en toda LECTURA, 0.4 durante la revelación, fondo 0.3 en REPOSO/encuadre (antes fluctuaba 0.2/0.35/0.4).
+
+**Notas técnicas:**
+- `Error: extra_pnginfo[0] is not a dict or missing 'workflow' key` en ComfyUI es **inofensivo** (el PNG no lleva el workflow embebido; la generación no se afecta).
+- El modelo Qwen del nodo `AILab_QwenVL_GGUF_PromptEnhancer` se recarga por corrida (ComfyUI crea instancia nueva por ejecución; el nodo no expone `keep_model_loaded`). **Aceptado, sin parche.**
+
+### 2026-08-13 — Face swap end-to-end FUNCIONA (con parpadeo pendiente de pulir)
+
+**Estado: el swap de cara ya funciona de punta a punta** (captura → generación → reveal → ESPEJO_ACTIVO → reflejo con cara intercambiada). Queda un problema de **parpadeo** sin resolver (ver abajo).
+
+**Bug 1 — 431 en el navegador (base64 como URL)**
+- `frontend/src/main.ts`: el `swap_frame` llegaba como base64 crudo y se asignaba directo a `img.src` → el navegador lo trataba como URL gigante → `431 Request Header Fields Too Large`.
+- Fix: `swapImgEl.src = `data:image/jpeg;base64,${data.image_b64}`;`
+
+**Bug 2 — Env no correcto (proceso viejo con el puerto 3001)**
+- Había **dos vision services** compitiendo por el puerto 3001; el viejo (`.venv`/uv-python, sin swap funcional) se quedaba con el puerto y el orquestador le hablaba a él → cámara OK, swap nunca arrancaba, sin errores.
+- `start.bat` arrancaba el vision service con `.venv` (CPU, numpy 2.x → insightface detecta 0 caras silenciosamente).
+- Fix: `start.bat` ahora usa `.venv-swap` (GPU + swap). **Regla: el vision service SIEMPRE con `.venv-swap`, NUNCA `.venv`.**
+
+**Bug 3 — `start_swap_background` no estaba definida**
+- `vision_server.py` la usaba en `recv_loop` pero no existía → `NameError` → crasheaba el handler WS al recibir `start_swap`.
+- Fix: función agregada — carga modelos + `set_source` en thread aparte, setea `swap_active` y emite `swap_status`.
+
+**Bug 4 — `PayloadTooBig` cortaba la conexión al mandar el portrait**
+- `websockets.serve` por defecto limita mensajes a **1 MB**. El `start_swap` manda el portrait completo en base64 (varios MB) → la librería cortaba la conexión justo al recibirlo (síntoma: `Disconnected from Vision Service` en el orquestador, sin `Command received: start_swap` en vision).
+- Fix: `websockets.serve(..., max_size=100 * 1024 * 1024)`.
+
+**Bug 5 — cuDNN no encontrado en proceso de larga duración**
+- Error: `Could not locate cudnn_graph64_9.dll. Please make sure it is in your library path!` / `Invalid handle. Cannot load symbol cudnnCreate`.
+- En proceso fresco (`python -c`) cargaba OK, pero el vision service (con OpenCV + MediaPipe ya cargados) fallaba → `os.add_dll_directory` solo no alcanza en procesos largos.
+- Fix (doble): 
+  1. Copiar DLLs de `C:\ComfyUI\ComfyUI-Easy-Install\python_embeded\Lib\site-packages\torch\lib\` (`cudnn*.dll`, `cublas*`, `cudart*`, etc.) a `.venv-swap\Lib\site-packages\onnxruntime\capi\`.
+  2. Al arrancar `vision_server.py` (y en `swapper._ensure_models`): `os.add_dll_directory(capi)` **+ prepend de capi a `os.environ["PATH"]`**.
+- Validado: `[FaceSwapper] models loaded (buffalo_l + inswapper_128)`, `[FaceSwapper] source face set (1 face(s) in portrait)`, `[swap] source face set — swap ACTIVE`.
+
+**PENDIENTE — Parpadeo constante en el reflejo (a pulir la próxima)**
+- El reflejo aparece pero **parpadea todo el tiempo** (alterna entre cara swapada y cámara normal).
+- **Hipótesis principal:** en `orchestrator/src/ws/visionClient.js`, el branch binario hace `this.onFrame?.(raw)` **y además** `this.onSwapFrame?.(b64)` para CADA frame de cámara. Entonces en ESPEJO_ACTIVO el orquestador emite `swap_frame` por dos vías: (a) los frames swapados reales (eventos JSON `swap_frame` del vision service) y (b) cada frame crudo de cámara **sin swapear**. El frontend (`swapImgEl.src`) muestra el último que llega → alterna swapeado/no-swapeado → parpadeo.
+- **Fix propuesto (no aplicado):** en `visionClient.js` quitar `this.onSwapFrame?.(b64)` del branch binario — los binary frames van SOLO a `onFrame` (preview); el `swap_frame` debe venir únicamente de los eventos JSON del vision service. Alternativa: gatear para no reenviar binarios como swap cuando el swap está activo.
+- Nota: el vision service manda ~30fps binarios y el swap_thread ~20fps de `swap_frame`, así que el frame crudo "pisa" al swapeado constantemente.
+
+**Notas de entorno (recurrentes):**
+- Los DLLs de cuDNN/CUDA pueden faltar en `onnxruntime/capi` → recopiar de `torch\lib` de ComfyUI (ver Bug 5).
+- Verificar siempre que solo UN vision service (`.venv-swap`) tenga el puerto 3001.
+- El vision service crashea (exit code 1) si un error no capturado ocurre en `recv_loop` → dejar los comandos de swap protegidos con try/except (ya está).
+
 ### Pending
 
-- **ComfyUI bridge** — Not started
-- **Face swap service** — Not started
-- **Frontend states beyond GENERACION** (REVELACION, ESPEJO_ACTIVO, SOUVENIR, CIERRE) — Not implemented
+- **Face swap — pulir el parpadeo** del reflejo (ver hipótesis/fix propuesto arriba). El swap ya funciona end-to-end.
+- **SOUVENIR + mail** — endpoint REST existe, `mail.js` es stub.
+- **CIERRE** — Not implemented.
 
 ### Key Fixes Applied
 

@@ -5,16 +5,32 @@ import threading
 import time
 import json
 import os
+import base64
 from collections import deque
 from detector import MediaPipeDetector
 from capture import capture_photo
+from swapper import FaceSwapper
+
+# ─── cuDNN / CUDA DLL path (must run at startup, before onnxruntime) ──
+# os.add_dll_directory alone is unreliable in long-running processes; prepend
+# the onnxruntime capi dir to PATH too so every LoadLibrary can find cuDNN.
+try:
+    import onnxruntime as _ort
+    _capi = os.path.join(os.path.dirname(os.path.abspath(_ort.__file__)), "capi")
+    if os.path.isdir(_capi):
+        os.add_dll_directory(_capi)
+        if _capi not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = _capi + os.pathsep + os.environ.get("PATH", "")
+        print(f"[vision_server] cuDNN capi listo: {_capi}")
+except Exception as _e:
+    print(f"[vision_server] cuDNN path setup warning: {_e}")
 
 # ─── Configuration ─────────────────────────────────────────────
-CAMERA_ROTATION = None  # Raptor Vision sends native portrait (1440x2560)
+CAMERA_ROTATION = None  # Raptor Vision sends native 4K portrait (2160x3840)
 STREAM_SCALE = 1.0    # full resolution (no downscale)
 JPEG_QUALITY = 85     # higher quality for HD
-CROP_TO_9_16 = False   # no crop needed when rotating from native landscape
-CAMERA_INDEX = 1        # 0 = built-in, 1 = Raptor Vision 4K (1440x2560 portrait)
+CROP_TO_9_16 = False   # already native 9:16 portrait
+CAMERA_INDEX = 1        # 0 = built-in, 1 = Raptor Vision 4K (2160x3840 portrait via MJPG)
 
 
 # ─── Thread-safe event queue ───────────────────────────────────
@@ -58,6 +74,10 @@ event_queue = EventQueue()
 detector = MediaPipeDetector()
 _wave_notification = 0  # frames remaining to show wave overlay
 
+# ─── Face swap (inswapper, integrated) ────────────────────────
+swapper = FaceSwapper()
+swap_active = False  # True while ESPEJO_ACTIVO runs
+
 
 def capture_thread():
     """Captures frames as fast as possible — no blocking."""
@@ -69,12 +89,13 @@ def capture_thread():
     if not cap.isOpened():
         print("Error: Could not open any video device.")
         return
-    # Request highest resolution
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    # Force MJPG codec for 4K support, then set resolution
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2160)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 3840)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"Camera opened: {w}x{h}")
+    print(f"Camera opened: {w}x{h} (4K portrait)")
 
     while True:
         ret, frame = cap.read()
@@ -130,6 +151,64 @@ def detection_thread():
                 print(f"Detection error: {e}")
 
         time.sleep(0.2)
+
+
+def swap_thread():
+    """Runs while swap is active: swaps the latest frame and pushes swap_frame events."""
+    global swap_active
+    while True:
+        if not swap_active or not swapper.has_source():
+            time.sleep(0.05)
+            continue
+
+        frame = video_buffer.get_frame()
+        if frame is None:
+            time.sleep(0.02)
+            continue
+
+        t0 = time.time()
+        # Downscale before swap (4K is wasteful for inswapper) → max dim ~960
+        h, w = frame.shape[:2]
+        scale = min(1.0, 960 / max(h, w))
+        if scale < 1.0:
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+
+        swapped = swapper.swap(frame)
+        if swapped is None:
+            time.sleep(0.02)
+            continue
+
+        ok, buf = cv2.imencode('.jpg', swapped, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if ok:
+            event_queue.push({"type": "swap_frame", "image_b64": base64.b64encode(buf).decode('utf-8')})
+
+        # Cap at ~20 fps
+        elapsed = time.time() - t0
+        if elapsed < 0.05:
+            time.sleep(0.05 - elapsed)
+        else:
+            time.sleep(0.01)
+
+
+def start_swap_background(image_b64: str):
+    """Load models + set the source face (generated portrait) in a background
+    thread so the async event loop / WebSocket connection never blocks.
+    On success flips swap_active so swap_thread starts producing frames."""
+    global swap_active
+    try:
+        ok = swapper.set_source(image_b64)
+        if ok:
+            swap_active = True
+            print("[swap] source face set — swap ACTIVE")
+            event_queue.push({"type": "swap_status", "active": True, "ready": swapper.ready})
+        else:
+            swap_active = False
+            print("[swap] set_source returned False — swap NOT started")
+            event_queue.push({"type": "swap_status", "active": False, "ready": swapper.ready, "error": "no source face"})
+    except Exception as e:
+        swap_active = False
+        print(f"[swap] start_swap_background error: {e}")
+        event_queue.push({"type": "swap_status", "active": False, "ready": swapper.ready, "error": str(e)})
 
 
 async def handler(websocket):
@@ -201,6 +280,7 @@ async def handler(websocket):
 
     async def recv_loop():
         """Listen for incoming commands from the orchestrator."""
+        global swap_active
         try:
             async for raw in websocket:
                 try:
@@ -225,6 +305,19 @@ async def handler(websocket):
                             })
                         else:
                             print("Error: capture_photo failed — no frame available")
+
+                    elif cmd == "start_swap":
+                        print("Command received: start_swap")
+                        # Load models + set source in a background thread so the
+                        # async event loop (and WebSocket connections) don't block
+                        image_b64 = data.get("image_b64", "")
+                        threading.Thread(target=start_swap_background, args=(image_b64,), daemon=True).start()
+
+                    elif cmd == "stop_swap":
+                        print("Command received: stop_swap")
+                        swap_active = False
+                        event_queue.push({"type": "swap_status", "active": False, "ready": swapper.ready})
+
                     else:
                         print(f"Unknown command: {cmd}")
 
@@ -245,11 +338,17 @@ async def main():
     detection = threading.Thread(target=detection_thread, daemon=True)
     detection.start()
 
+    # Start the face swap thread (idles until start_swap)
+    swap = threading.Thread(target=swap_thread, daemon=True)
+    swap.start()
+
     # Wait a moment for the first frame to be captured
     time.sleep(1)
 
     # Assuming port 3001 as defined in the architecture roadmap
-    async with websockets.serve(handler, "0.0.0.0", 3001):
+    # max_size alto: start_swap manda el portrait completo en base64 (varios MB).
+    # El default de websockets (1MB) tira PayloadTooBig y corta la conexión.
+    async with websockets.serve(handler, "0.0.0.0", 3001, max_size=100 * 1024 * 1024):
         print("Vision Service running on port 3001...")
         await asyncio.Future()  # run forever
 

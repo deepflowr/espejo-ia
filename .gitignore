@@ -10,6 +10,7 @@ __pycache__/
 .insightface/
 vision-service/models/*.tflite
 vision-service/models/*.task
+vision-service/models/*.onnx
 
 # Build output
 frontend/dist/

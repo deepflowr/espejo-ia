@@ -40,6 +40,12 @@ function setupUiServer(wss, stateMachine, visionClient, getSessionId) {
             stateMachine.transition(STATES.CAPTURA);
           }
         }
+        if (data.type === 'start_espejo') {
+          console.log('Frontend signaled espejo activo');
+          if (stateMachine.state === STATES.REVELACION) {
+            stateMachine.transition(STATES.ESPEJO_ACTIVO);
+          }
+        }
         if (data.type === 'capture_photo') {
           console.log('Frontend requested photo capture');
           // Guard: ensure we're in CAPTURA (continue may have been lost on reconnect)

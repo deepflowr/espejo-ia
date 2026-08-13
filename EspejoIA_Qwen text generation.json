@@ -79,6 +79,22 @@
       ],
       "preset_system_prompt": "📝 Enhance",
       "custom_system_prompt": "Translate the prompt to Argentinian Spanish. Just the exact same text, don't include reasoning or details.",
+      "max_tokens": 1024,
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "repetition_penalty": 1.1,
+      "english_output": false,
+      "device": "auto",
+      "seed": 1
+    },
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q5_K_M.gguf",
+      "prompt_text": [
+        "3",
+        0
+      ],
+      "preset_system_prompt": "📝 Enhance",
+      "custom_system_prompt": "Translate the prompt to Argentinian Spanish. Just the exact same text, don't include reasoning or details.",
       "max_tokens": 256,
       "temperature": 0.1,
       "top_p": 0.9,

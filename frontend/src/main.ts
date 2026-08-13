@@ -1037,6 +1037,100 @@ async function startFaceSnapshots() {
   }
 }
 
+// ─── Reveal step polaroids — accumulate during the reveal ────
+let stepPolaroids: FaceSnapshot[] = [];
+
+function makeStepPolaroidTexture(src: string): Promise<THREE.CanvasTexture | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const fail = () => resolve(null);
+    const timer = setTimeout(fail, 5000); // never hang the progression
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const c = document.createElement('canvas');
+        const border = 10;
+        const size = 320;
+        c.width = size + border * 2;
+        c.height = size + border * 2;
+        const ctx = c.getContext('2d')!;
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.shadowColor = 'rgba(0,0,0,0.2)';
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetX = 1;
+        ctx.shadowOffsetY = 1;
+        // Mirror (like camera feed)
+        ctx.save();
+        ctx.translate(c.width / 2, 0);
+        ctx.scale(-1, 1);
+        ctx.translate(-c.width / 2, 0);
+        ctx.drawImage(img, border, border, size, size);
+        ctx.restore();
+        ctx.shadowColor = 'transparent';
+        const tex = new THREE.CanvasTexture(c);
+        tex.needsUpdate = true;
+        resolve(tex);
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = fail;
+    img.src = src;
+  });
+}
+
+function spawnStepPolaroid(tex: THREE.CanvasTexture, big = false) {
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
+  const mesh = new THREE.Mesh(planeGeo, mat);
+  const ghostMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
+  const ghost = new THREE.Mesh(planeGeo, ghostMat);
+  let zDepth: number, bp: THREE.Vector3, s: number;
+  if (big) {
+    zDepth = -1.2;
+    bp = new THREE.Vector3(0, 0, zDepth);
+    s = 0.5;
+  } else {
+    zDepth = -(0.4 + Math.random() * 2.5);
+    const spread = -zDepth * (0.25 + Math.random() * 0.7);
+    const angle = Math.random() * Math.PI * 2;
+    bp = new THREE.Vector3(Math.cos(angle) * spread, -0.7 + Math.random() * 1.4, zDepth);
+    s = 0.05 + Math.random() * 0.05;
+  }
+  mesh.position.copy(bp);
+  mesh.scale.set(s * 1.2, s * 1.2, 1);
+  mesh.renderOrder = 6;
+  mesh.rotation.set((Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 0.8);
+  ghost.position.copy(bp);
+  ghost.position.z += 0.005;
+  ghost.scale.copy(mesh.scale).multiplyScalar(1.02);
+  ghost.rotation.copy(mesh.rotation);
+  ghost.renderOrder = 5;
+  scene.add(mesh);
+  scene.add(ghost);
+  stepPolaroids.push({
+    mesh, ghost,
+    phase: Math.random() * Math.PI * 2,
+    life: 0,
+    state: 'rising',
+    basePos: bp.clone(),
+    vel: new THREE.Vector3((Math.random() - 0.5) * 0.0002, (Math.random() - 0.5) * 0.0002, 0),
+    rotSpeed: new THREE.Vector3((Math.random() - 0.5) * 0.0004, (Math.random() - 0.5) * 0.0005, (Math.random() - 0.5) * 0.0003),
+    ghostOffset: new THREE.Vector3((Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.015, 0),
+    glitchTimer: 0.06 + Math.random() * 0.1,
+  });
+}
+
+function destroyStepPolaroids() {
+  for (const sp of stepPolaroids) {
+    scene.remove(sp.mesh);
+    scene.remove(sp.ghost);
+    (sp.mesh.material as THREE.MeshBasicMaterial).dispose();
+    (sp.ghost.material as THREE.MeshBasicMaterial).dispose();
+  }
+  stepPolaroids = [];
+}
+
 // ─── LECTURA layers ────────────────────────────────────────────
 const revealMeshObj = createRevealMesh();
 scene.add(revealMeshObj.mesh);
@@ -1045,6 +1139,299 @@ let faceAssembly: Awaited<ReturnType<typeof createFaceAssembly>> | null = null;
 let analysisHUD: Awaited<ReturnType<typeof createAnalysisHUD>> | null = null;
 const lecturaThinking = createLecturaThinking();
 const promptBox = createPromptBox();
+
+// Wave hint text — appears below the description box when ready to advance
+const lecturaWaveHint = document.createElement('div');
+lecturaWaveHint.id = 'lectura-wave-hint';
+lecturaWaveHint.style.cssText = [
+  'font: 13px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 1px;',
+  'color: rgb(220, 210, 120);',
+  'text-align: center;',
+  'margin-top: 14px;',
+  'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
+  'display: none;',
+  'pointer-events: none;',
+].join('');
+lecturaWaveHint.innerHTML = '> Saludá con la mano para continuar ' + WAVE_SVG;
+document.getElementById('lectura-thinking')?.appendChild(lecturaWaveHint);
+
+// Prompt wave hint — appears below the prompt box when generation is ready
+const promptWaveHint = document.createElement('div');
+promptWaveHint.id = 'prompt-wave-hint';
+promptWaveHint.style.cssText = [
+  'font: 13px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 1px;',
+  'color: rgb(220, 210, 120);',
+  'text-align: center;',
+  'margin-top: 14px;',
+  'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
+  'display: none;',
+  'pointer-events: none;',
+].join('');
+promptWaveHint.innerHTML = '> Saludá con la mano para continuar ' + WAVE_SVG;
+document.getElementById('prompt-box')?.appendChild(promptWaveHint);
+
+// ─── Reveal stage (REVELACION) — central polaroid + accumulating background ─
+const REVEAL_PHOTO_SIZE = 'min(62vw, 420px)';
+const REVEAL_PROGRESS_SIZE = 'min(78vw, 600px)';
+const revealStageEl = document.createElement('div');
+revealStageEl.id = 'revelacion-stage';
+revealStageEl.style.cssText = [
+  'position:fixed;top:0;left:0;width:100%;height:100%;',
+  'display:none;flex-direction:column;align-items:center;justify-content:center;',
+  'gap:14px;',
+  'pointer-events:none;z-index:900;',
+  'opacity:0;',
+  'transition:opacity 0.8s ease;',
+].join('');
+document.body.appendChild(revealStageEl);
+
+// Big title (only during progression, hidden at the final)
+const revealTitleEl = document.createElement('div');
+revealTitleEl.id = 'revelacion-title';
+revealTitleEl.style.cssText = [
+  'font: 26px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 2px;',
+  'color: rgb(220, 210, 120);',
+  'text-align: center;',
+  'text-shadow: 0 0 12px rgba(0,0,0,0.9);',
+].join('');
+revealTitleEl.textContent = '> Generando tu reflejo...';
+revealStageEl.appendChild(revealTitleEl);
+
+// Label above the original photo (yellow)
+const revealOriginalLabel = document.createElement('div');
+revealOriginalLabel.id = 'revelacion-original-label';
+revealOriginalLabel.style.cssText = [
+  'font: 19px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 2px;',
+  'color: rgb(220, 210, 120);',
+  'text-align: center;',
+  'text-shadow: 0 0 12px rgba(0,0,0,0.9);',
+  'display: none;',
+].join('');
+revealOriginalLabel.textContent = '> Tu cara';
+revealStageEl.appendChild(revealOriginalLabel);
+
+// Original photo polaroid (same size as the reflection)
+const revealOriginalWrap = document.createElement('div');
+revealOriginalWrap.id = 'revelacion-original';
+revealOriginalWrap.style.cssText = [
+  'width:' + REVEAL_PHOTO_SIZE + ';',
+  'height:' + REVEAL_PHOTO_SIZE + ';',
+  'background:rgba(255,255,255,0.92);',
+  'padding:10px;',
+  'border-radius:2px;',
+  'box-shadow:0 6px 30px rgba(0,0,0,0.55);',
+  'display:none;',
+].join('');
+revealStageEl.appendChild(revealOriginalWrap);
+
+const revealOriginalImg = document.createElement('img');
+revealOriginalImg.id = 'revelacion-original-img';
+revealOriginalImg.style.cssText = [
+  'width:100%;height:100%;object-fit:cover;display:block;',
+  '-webkit-transform:scaleX(-1);transform:scaleX(-1);',
+].join('');
+revealOriginalWrap.appendChild(revealOriginalImg);
+
+// Label above the reflection photo (green)
+const revealReflectionLabel = document.createElement('div');
+revealReflectionLabel.id = 'revelacion-reflection-label';
+revealReflectionLabel.style.cssText = [
+  'font: 19px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 2px;',
+  'color: #4ade80;',
+  'text-align: center;',
+  'text-shadow: 0 0 12px rgba(0,0,0,0.9);',
+  'display: none;',
+].join('');
+revealReflectionLabel.textContent = '> Reflejo generado';
+revealStageEl.appendChild(revealReflectionLabel);
+
+// Reflection polaroid (goes through every denoise step during progression)
+const revealCentralWrap = document.createElement('div');
+revealCentralWrap.id = 'revelacion-central';
+revealCentralWrap.style.cssText = [
+  'width:' + REVEAL_PHOTO_SIZE + ';',
+  'height:' + REVEAL_PHOTO_SIZE + ';',
+  'background:rgba(255,255,255,0.92);',
+  'padding:10px;',
+  'border-radius:2px;',
+  'box-shadow:0 6px 30px rgba(0,0,0,0.55);',
+  'animation:revealFloat 5s ease-in-out infinite;',
+].join('');
+revealStageEl.appendChild(revealCentralWrap);
+
+const revealCentralImg = document.createElement('img');
+revealCentralImg.id = 'revelacion-central-img';
+revealCentralImg.style.cssText = [
+  'width:100%;height:100%;object-fit:cover;display:block;',
+  '-webkit-transform:scaleX(-1);transform:scaleX(-1);',
+].join('');
+revealCentralWrap.appendChild(revealCentralImg);
+
+// Sub text (just below the reflection)
+const revealSubEl = document.createElement('div');
+revealSubEl.id = 'revelacion-sub';
+revealSubEl.style.cssText = [
+  'font: 15px Consolas, "Courier New", monospace;',
+  'font-style: italic;',
+  'text-transform: uppercase;',
+  'letter-spacing: 1px;',
+  'color: rgba(210, 220, 240, 0.85);',
+  'text-align: center;',
+  'text-shadow: 0 0 8px rgba(0,0,0,0.9);',
+].join('');
+revealSubEl.textContent = '';
+revealStageEl.appendChild(revealSubEl);
+
+// Float keyframes for the reflection polaroid
+const revealFloatStyle = document.createElement('style');
+revealFloatStyle.textContent = `
+  @keyframes revealFloat {
+    0% { transform: translateY(-4px); }
+    50% { transform: translateY(4px); }
+    100% { transform: translateY(-4px); }
+  }
+`;
+document.head.appendChild(revealFloatStyle);
+
+// ─── ESPEJO ACTIVO — live swapped reflection ──────────────
+const swapImgEl = document.createElement('img');
+swapImgEl.id = 'swap-feed';
+swapImgEl.style.cssText = [
+  'position:fixed;top:0;left:0;width:100%;height:100%;',
+  'object-fit:cover;display:none;pointer-events:none;z-index:950;',
+  '-webkit-transform:scaleX(-1);transform:scaleX(-1);',
+].join('');
+document.body.appendChild(swapImgEl);
+let espejoActive = false;
+
+let revealToken = 0;
+let revealDone = false;
+let revealActive = false;
+let revealDoneAt = 0; // clock time when the reveal finished (grace before espejo wave)
+
+function clearRevealStage() {
+  revealToken++;
+  revealDone = false;
+  revealActive = false;
+  destroyStepPolaroids();
+  revealTitleEl.style.display = '';
+  revealOriginalLabel.style.display = 'none';
+  revealOriginalWrap.style.display = 'none';
+  revealReflectionLabel.style.display = 'none';
+  revealStageEl.style.opacity = '0';
+  setTimeout(() => { revealStageEl.style.display = 'none'; }, 800);
+}
+
+/** Convert all background polaroids (steps + canny) to the final image. */
+function morphBackgroundToFinal(tex: THREE.CanvasTexture) {
+  for (const sp of stepPolaroids) {
+    const sm = sp.mesh.material as THREE.MeshBasicMaterial;
+    const sg = sp.ghost.material as THREE.MeshBasicMaterial;
+    if (sm.map && sm.map !== tex) sm.map.dispose();
+    if (sg.map && sg.map !== tex) sg.map.dispose();
+    sm.map = tex; sm.needsUpdate = true;
+    sg.map = tex; sg.needsUpdate = true;
+  }
+  for (const fs of faceSnapshots) {
+    const sm = fs.mesh.material as THREE.MeshBasicMaterial;
+    const sg = fs.ghost.material as THREE.MeshBasicMaterial;
+    if (sm.map && sm.map !== tex) sm.map.dispose();
+    if (sg.map && sg.map !== tex) sg.map.dispose();
+    sm.map = tex; sm.needsUpdate = true;
+    sg.map = tex; sg.needsUpdate = true;
+  }
+}
+
+async function playRevealSteps(token: number) {
+  const steps = genPreviewSteps.slice();
+  const total = Math.max(steps.length, 1);
+  for (let i = 0; i < steps.length; i++) {
+    if (token !== revealToken) return;
+    revealSubEl.textContent = `> Paso ${i + 1} / ${total}`;
+    // The central polaroid goes through every denoise step (visible progression)
+    revealCentralImg.src = steps[i];
+    // Each step also adds a couple of polaroids of this step to the background
+    const tex = await makeStepPolaroidTexture(steps[i]);
+    if (token !== revealToken) { if (tex) tex.dispose(); return; }
+    if (tex) {
+      spawnStepPolaroid(tex);
+      spawnStepPolaroid(tex);
+    }
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  if (token !== revealToken) return;
+  // Shrink to final size so original + reflection match
+  revealCentralWrap.style.width = REVEAL_PHOTO_SIZE;
+  revealCentralWrap.style.height = REVEAL_PHOTO_SIZE;
+  revealCentralWrap.style.padding = '10px';
+  // Final layout: TU CARA (yellow) → original, REFLEJO GENERADO (green) → reflection
+  revealTitleEl.style.display = 'none';
+  revealOriginalLabel.style.display = 'block';
+  revealReflectionLabel.style.display = 'block';
+  if (capturedPhotoBase64) {
+    revealOriginalImg.src = capturedPhotoBase64;
+    revealOriginalWrap.style.display = 'block';
+  }
+  revealSubEl.textContent = '> Finalizando...';
+  // Reveal the generated image in the central polaroid
+  if (finalPortraitBase64) {
+    revealCentralImg.src = finalPortraitBase64;
+    // All background polaroids become the final image
+    const ftex = await makeStepPolaroidTexture(finalPortraitBase64);
+    if (token !== revealToken) { if (ftex) ftex.dispose(); return; }
+    if (ftex) morphBackgroundToFinal(ftex);
+  }
+  // Warm-white flash, like the canny reveal
+  revealMeshObj.trigger();
+  revealSubEl.innerHTML = '> Saludá para conocer a tu reflejo ' + WAVE_SVG;
+  revealDone = true;
+  revealDoneAt = Date.now();
+}
+
+function doRevealPortrait() {
+  promptBox.hide();
+  const hint = document.getElementById('prompt-wave-hint');
+  if (hint) hint.style.display = 'none';
+  const th = document.getElementById('lectura-thinking');
+  if (th && th.style.display !== 'none') lecturaThinking.hide();
+  if (analysisHUD) analysisHUD.hide();
+  const st = document.getElementById('lectura-status');
+  if (st) st.style.display = 'none';
+  if (!finalPortraitBase64 && genPreviewSteps.length === 0) return;
+
+  destroyStepPolaroids();
+  revealActive = true;
+  const token = ++revealToken;
+  // Big central polaroid during the denoise progression
+  revealCentralWrap.style.width = REVEAL_PROGRESS_SIZE;
+  revealCentralWrap.style.height = REVEAL_PROGRESS_SIZE;
+  revealCentralWrap.style.padding = '14px';
+  revealTitleEl.style.display = '';
+  revealTitleEl.textContent = '> Generando tu reflejo...';
+  revealTitleEl.style.color = 'rgb(220, 210, 120)';
+  revealOriginalLabel.style.display = 'none';
+  revealOriginalWrap.style.display = 'none';
+  revealReflectionLabel.style.display = 'none';
+  revealStageEl.style.display = 'flex';
+  requestAnimationFrame(() => { revealStageEl.style.opacity = '1'; });
+  playRevealSteps(token);
+}
+
 let storedPromptES = '';
 let promptESReady = false;
 let promptESDeferred = false;
@@ -1056,6 +1443,10 @@ let postWavePhase: '' | 'prompt_countdown' | 'prompt_done' | 'contours_countdown
 let postWaveTimer = 0;
 let cannyEdgeBase64: string | null = null;
 let waitingForCannyMorph = false;
+let finalPortraitBase64: string | null = null;
+let promptShownAt = -1;         // clock time when prompt box appeared
+let promptWaveHintShown = false; // hint below prompt box currently visible
+let genPreviewSteps: string[] = []; // buffered denoise progression (noise → final)
 
 let lecturaLayersReady = false;
 
@@ -1090,6 +1481,11 @@ function enterLectura() {
   promptESDeferred = false;
   cannyEdgeBase64 = null;
   waitingForCannyMorph = false;
+  finalPortraitBase64 = null;
+  promptShownAt = -1;
+  promptWaveHintShown = false;
+  genPreviewSteps = [];
+  clearRevealStage();
   waitingDescWave = false;
   destroyDescriptionSprites();
   destroyQuestionSprites();
@@ -1240,6 +1636,11 @@ function leaveLectura() {
   descWaveReadyTimer = 0;
   postWavePhase = '';
   postWaveTimer = 0;
+  finalPortraitBase64 = null;
+  promptShownAt = -1;
+  promptWaveHintShown = false;
+  genPreviewSteps = [];
+  clearRevealStage();
   promptBox.hide();
   destroyDescriptionSprites();
   destroyFaceSnapshots();
@@ -1490,8 +1891,8 @@ function enterEncuadre() {
   // Animate the face box to centered oval guide
   boxEl.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
   boxEl.style.borderRadius = '50%';
-  boxEl.style.border = '1px solid rgba(255,255,255,0.35)';
-  boxEl.style.boxShadow = '0 0 30px rgba(255,255,255,0.1), inset 0 0 30px rgba(255,255,255,0.03)';
+  boxEl.style.border = '3px solid rgba(255,255,255,0.6)';
+  boxEl.style.boxShadow = '0 0 40px rgba(255,255,255,0.25), inset 0 0 40px rgba(255,255,255,0.06)';
   boxContainer.style.left = targetX + 'px';
   boxContainer.style.top = targetY + 'px';
   boxContainer.style.width = ovalW + 'px';
@@ -1623,20 +2024,46 @@ wsClient.onMessage = (data) => {
       dialogEl.style.opacity = '0';
       hintEl.style.display = 'none';
     }
+    if (data.state === 'ESPEJO_ACTIVO') {
+      // Live face-swapped reflection
+      espejoActive = true;
+      clearRevealStage();
+      swapImgEl.style.display = 'block';
+    } else if (espejoActive) {
+      espejoActive = false;
+      swapImgEl.style.display = 'none';
+    }
     // For GENERACION+ states, stay in LECTURA visuals — don't revert to REPOSO
     if ((data.state === 'GENERACION' || data.state === 'REVELACION' || data.state === 'ESPEJO_ACTIVO') && appState === 'lectura') {
       // Keep photo, thinking box, and text visible
       // Face-assembly wireframes stop being updated naturally in the animation loop
     }
   }
+  if (data.type === 'swap_frame' && typeof data.image_b64 === 'string') {
+    // image_b64 llega SIN el prefijo data: — el navegador lo trataría como URL gigante (431)
+    swapImgEl.src = `data:image/jpeg;base64,${data.image_b64}`;
+  }
   if (data.type === 'photo_captured') {
     capturedPhotoBase64 = `data:image/png;base64,${data.image_b64}`;
+  }
+  if (data.type === 'final_portrait') {
+    finalPortraitBase64 = data.image_b64 as string;
+  }
+  if (data.type === 'gen_preview' && typeof data.image_b64 === 'string' && data.image_b64.length > 0) {
+    // Buffer denoise progression (noise → final) for the reveal — don't spoil the prompt/canny
+    genPreviewSteps.push(data.image_b64 as string);
   }
   if (data.type === 'canny_ready') {
     cannyEdgeBase64 = data.image_b64 as string; // already includes data:image/png;base64, from orchestrator
     // Replace face snapshot textures with canny edge
     applyCannyToFaceSnapshots();
     if (waitingForCannyMorph) {
+      waitingForCannyMorph = false;
+      postWavePhase = 'contours_done';
+      const st5 = document.getElementById('lectura-status-main');
+      if (st5) st5.textContent = '> Enviando contornos y prompt...';
+      const stSub2 = document.getElementById('lectura-status-sub');
+      if (stSub2) stSub2.textContent = '> Contornos recibidos ✓';
       doCannyMorph();
     }
   }
@@ -1690,11 +2117,18 @@ function processStreamChunk(ch: string, delta: string, done: boolean) {
         dialogWavePending = false;
         // Start floating description sprites immediately
         createDescriptionSprites(storedDescription);
-        const st = document.getElementById('lectura-status-main');
-        if (st) st.textContent = '> Descripción lista. Generando prompt...';
         waitingDescWave = true;
         // Minimum 1.5s before accepting wave so user sees the message
         descWaveReadyTimer = 1.5;
+        // If prompt_es already arrived, show wave message; otherwise keep "generating" text
+        const st = document.getElementById('lectura-status-main');
+        if (st) {
+          if (promptESReady) {
+            st.innerHTML = '> Saludá con la mano para continuar ' + WAVE_SVG;
+          } else {
+            st.textContent = '> Descripción lista. Generando prompt...';
+          }
+        }
       }
     }
     return;
@@ -2011,6 +2445,12 @@ function animate() {
         }
       }
 
+      // Show/hide the wave hint box below the description
+      const waveHintEl = document.getElementById('lectura-wave-hint');
+      if (waveHintEl) {
+        waveHintEl.style.display = (waitingDescWave && promptESReady) ? 'block' : 'none';
+      }
+
       // Wave advances from description-read state (with min timer)
       if (descWaveReadyTimer > 0) descWaveReadyTimer -= dt;
       if (waitingDescWave && dialogWavePending && descWaveReadyTimer <= 0) {
@@ -2043,7 +2483,7 @@ function animate() {
           const st3 = document.getElementById('lectura-status-main');
           if (st3) { st3.textContent = '> Prompt completado ✓'; st3.style.color = '#4ade80'; }
           // Show prompt box now
-          if (storedPromptES) promptBox.show(storedPromptES);
+          if (storedPromptES) { promptBox.show(storedPromptES); promptShownAt = time; }
           if (promptESDeferred) { promptESDeferred = false; }
         }
       } else if (postWavePhase === 'prompt_done') {
@@ -2052,28 +2492,54 @@ function animate() {
         if (stSub) stSub.textContent = `> Mostrando prompt — ${Math.ceil(postWaveTimer)}s`;
         if (postWaveTimer <= 0) {
           postWavePhase = 'contours_countdown';
-          postWaveTimer = 15;
+          postWaveTimer = 5; // min hold before showing contours
           const st4 = document.getElementById('lectura-status-main');
           if (st4) { st4.textContent = '> Generando contornos de la cara...'; st4.style.color = 'rgb(220,210,120)'; }
-          waitingForCannyMorph = true;
-          if (cannyEdgeBase64) doCannyMorph();
+          waitingForCannyMorph = false;
         }
       } else if (postWavePhase === 'contours_countdown') {
         postWaveTimer -= dt;
         const stSub = document.getElementById('lectura-status-sub');
-        if (stSub) stSub.textContent = `> Tiempo estimado: ${Math.ceil(postWaveTimer)}s`;
-        if (postWaveTimer <= 0 || cannyEdgeBase64) {
-          postWavePhase = 'contours_done';
-          const st5 = document.getElementById('lectura-status-main');
-          if (st5) st5.textContent = '> Enviando contornos y prompt...';
-          const stSub2 = document.getElementById('lectura-status-sub');
-          if (stSub2) stSub2.textContent = '> Contornos recibidos ✓';
-          if (!cannyEdgeBase64) {
-            // Still waiting for canny
-            waitingForCannyMorph = true;
-          } else {
+        if (stSub) {
+          if (postWaveTimer > 0) stSub.textContent = `> Tiempo estimado: ${Math.ceil(postWaveTimer)}s`;
+          else if (!cannyEdgeBase64) stSub.textContent = '> Esperando contornos...';
+        }
+        if (postWaveTimer <= 0) {
+          if (cannyEdgeBase64) {
+            postWavePhase = 'contours_done';
+            const st5 = document.getElementById('lectura-status-main');
+            if (st5) st5.textContent = '> Enviando contornos y prompt...';
+            const stSub2 = document.getElementById('lectura-status-sub');
+            if (stSub2) stSub2.textContent = '> Contornos recibidos ✓';
             doCannyMorph();
+          } else {
+            // Canny not ready yet — morph as soon as it arrives
+            waitingForCannyMorph = true;
           }
+        }
+      }
+
+      // Prompt wave hint — show below prompt box ONLY when the portrait is actually ready,
+      // and only before the reveal/espejo (otherwise a later wave would re-trigger the reveal)
+      const pwh = document.getElementById('prompt-wave-hint');
+      if (pwh) {
+        if (!promptWaveHintShown && promptShownAt >= 0 && finalPortraitBase64 !== null && !revealActive && !espejoActive) {
+          promptWaveHintShown = true;
+          pwh.style.display = 'block';
+        }
+        // Wave advances from prompt-read state → reveal the generated portrait
+        if (promptWaveHintShown && dialogWavePending) {
+          dialogWavePending = false;
+          promptWaveHintShown = false;
+          pwh.style.display = 'none';
+          doRevealPortrait();
+        }
+        // After the reveal, a wave starts the live espejo (face swap) —
+        // with a short grace so the final reveal is visible first
+        if (revealDone && dialogWavePending && (Date.now() - revealDoneAt) > 2000) {
+          dialogWavePending = false;
+          revealDone = false;
+          wsClient.send({ type: 'start_espejo' });
         }
       }
     } catch (err) {
@@ -2201,7 +2667,7 @@ function animate() {
   }
 
   // ── Floating face snapshots (throughout LECTURA) ──
-  if (appState === 'lectura' && faceSnapshotTex) {
+  if (appState === 'lectura' && faceSnapshotTex && !revealActive) {
     if (faceSnapshots.length < FACE_SNAPSHOT_COUNT && Math.random() < 0.06) {
       spawnFaceSnapshot();
     }
@@ -2266,6 +2732,23 @@ function animate() {
     fs.ghost.position.y += (fs.basePos.y + bOff * 0.5 - fs.ghost.position.y) * 0.05;
   }
 
+  // ── Reveal step polaroids (accumulate, drift forever) ──
+  for (const sp of stepPolaroids) {
+    const sm = sp.mesh.material as THREE.MeshBasicMaterial;
+    const sg = sp.ghost.material as THREE.MeshBasicMaterial;
+    sp.life += dt;
+    sm.opacity = Math.min(0.85, sp.life * 2.5);
+    sg.opacity = sm.opacity * 0.3;
+    sp.basePos.x += Math.sin(Date.now() * 0.0004 + sp.phase) * 0.0003;
+    sp.basePos.y += Math.cos(Date.now() * 0.0005 + sp.phase) * 0.0003;
+    sp.mesh.position.copy(sp.basePos);
+    sp.mesh.rotation.x += sp.rotSpeed.x * dt * 60;
+    sp.mesh.rotation.y += sp.rotSpeed.y * dt * 60;
+    sp.mesh.rotation.z += sp.rotSpeed.z * dt * 60;
+    sp.ghost.position.copy(sp.mesh.position).add(sp.ghostOffset);
+    sp.ghost.rotation.copy(sp.mesh.rotation);
+  }
+
   // ── Draw camera frame to DOM canvas ──
   faceTracker.update(dt);
   if (pendingFrame) {
@@ -2295,9 +2778,9 @@ function animate() {
   }
   // ── Camera frame to DOM canvas ──
   if (appState === 'lectura') {
-    // During LECTURA: higher opacity when waiting for wave so hand tracking is visible
+    // During LECTURA: consistent baseline (0.3), a touch more during the reveal
     if (frameImg) {
-      const camOpacity = waitingDescWave ? '0.35' : '0.2';
+      const camOpacity = revealActive ? '0.4' : '0.3';
       camCanvas.style.maskImage = 'none';
       camCanvas.style.opacity = camOpacity;
       camCtx.clearRect(0, 0, vw, vh);
@@ -2316,7 +2799,7 @@ function animate() {
       const p = faceTracker.smoothedPos;
       const fw = faceTracker.smoothedSize;
       const fh = faceTracker.smoothedHeight;
-      camCtx.globalAlpha = 0.1;
+      camCtx.globalAlpha = 0.3;
       camCtx.drawImage(frameImg, 0, 0, vw, vh);
       if (fw > 0.01) {
         const sw2 = frameImg.naturalWidth || 270;

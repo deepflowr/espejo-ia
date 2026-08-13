@@ -80,10 +80,10 @@
   },
   "9": {
     "inputs": {
-      "enabled": true,
-      "clean_gpu": true,
-      "clean_cpu": true,
-      "unload_models": 3,
+      "enabled": false,
+      "clean_gpu": false,
+      "clean_cpu": false,
+      "unload_models": 0,
       "any_input": [
         "8",
         0
@@ -96,7 +96,7 @@
   },
   "10": {
     "inputs": {
-      "filename_prefix": "ComfyUI",
+      "filename_prefix": "Espejo_Final",
       "images": [
         "8",
         0
@@ -285,7 +285,7 @@
   },
   "60": {
     "inputs": {
-      "filename_prefix": "ComfyUI",
+      "filename_prefix": "Espejo_Step",
       "images": [
         "57",
         0
@@ -298,10 +298,10 @@
   },
   "61": {
     "inputs": {
-      "enabled": true,
-      "clean_gpu": true,
-      "clean_cpu": true,
-      "unload_models": 3,
+      "enabled": false,
+      "clean_gpu": false,
+      "clean_cpu": false,
+      "unload_models": 0,
       "any_input": [
         "59",
         0

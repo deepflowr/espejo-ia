@@ -167,6 +167,30 @@ function fetchImageBase64(filename, subfolder, type) {
 }
 
 /**
+ * Parse a ComfyUI binary WS frame (denoise preview / bpreview).
+ * Format: [uint32 type_len][uint32 data_len][type_json][data_json][binary_image]
+ */
+function parseBinaryFrame(buf) {
+  if (!buf || buf.length < 8) return null;
+  var typeLen = buf.readUInt32BE(0);
+  var dataLen = buf.readUInt32BE(4);
+  var offset = 8;
+  if (offset + typeLen + dataLen > buf.length) {
+    // try little-endian
+    typeLen = buf.readUInt32LE(0);
+    dataLen = buf.readUInt32LE(4);
+    offset = 8;
+    if (offset + typeLen + dataLen > buf.length) return null;
+  }
+  var typeStr = buf.slice(offset, offset + typeLen).toString('utf8');
+  var dataStr = buf.slice(offset + typeLen, offset + typeLen + dataLen).toString('utf8');
+  var binary = buf.slice(offset + typeLen + dataLen);
+  var parsed = null;
+  try { parsed = JSON.parse(dataStr); } catch (e) { parsed = null; }
+  return { type: typeStr, data: parsed, binary: binary };
+}
+
+/**
  * Queue the image workflow with the captured photo and prompt_en.
  * Polls aggressively for canny edge and sends it via callback as soon as ready.
  */
@@ -230,7 +254,21 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onCann
 
     var textPromptId = await queuePrompt(textWf, clientId);
 
+    var lastProgressStep = 0;
+    var lastProgressMax = 0;
     ws.on('message', function (data) {
+      // Binary preview frame (denoise progression) — ComfyUI bpreview
+      if (Buffer.isBuffer(data) && data.length > 8) {
+        var frame = parseBinaryFrame(data);
+        if (frame && frame.binary && frame.binary.length > 100 && onPreview) {
+          onPreview({
+            image_b64: 'data:image/png;base64,' + frame.binary.toString('base64'),
+            step: lastProgressStep,
+            total_steps: lastProgressMax,
+          });
+          return;
+        }
+      }
       try {
         var msg = JSON.parse(data.toString());
         if (msg.type === 'executed' && msg.data) {
@@ -273,6 +311,8 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onCann
         if (msg.type === 'progress' && msg.data) {
           var value = msg.data.value;
           var max = msg.data.max;
+          lastProgressStep = value;
+          lastProgressMax = max;
           if (onPreview && max > 0) onPreview({ step: value, total_steps: max });
         }
         if (msg.type === 'execution_success' && msg.data && msg.data.prompt_id === textPromptId) {
@@ -280,9 +320,6 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onCann
         }
       } catch (e) {
         console.warn('ComfyUI WS handler error: ' + (e && e.message ? e.message : e));
-        if (Buffer.isBuffer(data) && data.length > 100 && onPreview) {
-          onPreview({ image_b64: 'data:image/png;base64,' + data.toString('base64'), step: -1, total_steps: -1 });
-        }
       }
     });
     ws.on('error', function () {});
@@ -318,7 +355,7 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onCann
     }
 
     // --- Wait for image workflow to complete --------------------
-    var finalResult = { portrait_b64: null, canny_b64: null };
+    var finalResult = { portrait_b64: null, canny_b64: null, steps: [] };
 
     if (imagePromptId) {
       console.log('ComfyUI: waiting for image workflow outputs...');
@@ -327,16 +364,35 @@ async function generate(photoBase64, sessionId, onStreamChunk, onPreview, onCann
 
       var cannyImg = null;
       var portraitImg = null;
+      var stepImgs = [];
       for (var i = 0; i < outputImages.length; i++) {
         var img = outputImages[i];
-        if (img.filename.startsWith('Canny')) cannyImg = img;
-        if (img.filename.startsWith('ComfyUI')) portraitImg = img;
+        // Only pick saved outputs (type 'output'), not PreviewImage temp intermediates
+        if (img.filename.startsWith('Canny') && img.type === 'output') cannyImg = img;
+        if (img.filename.startsWith('Espejo_Step') && img.type === 'output') stepImgs.push(img);
+        if (img.filename.startsWith('Espejo_Final') && img.type === 'output') portraitImg = img;
+      }
+      // Fallback if no typed output found (older workflow naming)
+      if (!portraitImg) {
+        for (var i = 0; i < outputImages.length; i++) {
+          var img = outputImages[i];
+          if (img.filename.startsWith('Espejo_Final')) { portraitImg = img; break; }
+          if (img.filename.startsWith('ComfyUI')) portraitImg = img; // legacy
+        }
       }
 
       if (cannyImg && !finalResult.canny_b64) {
         finalResult.canny_b64 = await fetchImageBase64(cannyImg.filename, cannyImg.subfolder, cannyImg.type);
         console.log('ComfyUI: canny edge fetched from final poll');
       }
+      // Denoise progression steps (saved in order by filename counter)
+      stepImgs.sort(function (a, b) { return a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0; });
+      for (var i = 0; i < stepImgs.length; i++) {
+        try {
+          finalResult.steps.push(await fetchImageBase64(stepImgs[i].filename, stepImgs[i].subfolder, stepImgs[i].type));
+        } catch (e) { /* skip unreadable step */ }
+      }
+      if (finalResult.steps.length > 0) console.log('ComfyUI: ' + finalResult.steps.length + ' step previews fetched');
       if (portraitImg) {
         finalResult.portrait_b64 = await fetchImageBase64(portraitImg.filename, portraitImg.subfolder, portraitImg.type);
         console.log('ComfyUI: portrait fetched');

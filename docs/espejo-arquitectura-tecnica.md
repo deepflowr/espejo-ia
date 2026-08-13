@@ -194,9 +194,24 @@ Llamada HTTP con streaming (`stream: true`) a `http://localhost:11434/api/chat`,
 
 ## 6. Contrato con ComfyUI
 
-Se mantiene el bridge Node.js ya construido (workflow vía websocket). Cambios necesarios respecto a lo que ya existe:
-- El Orchestrator escucha los mensajes de `progress`/preview que ComfyUI ya emite por su propio protocolo, y los traduce a `gen_preview` para el frontend.
-- El prompt de texto que se inyecta al workflow es `prompt_en` (el que llega de Ollama), no lo que tipeaba manualmente antes.
+Bridge Node.js implementado (`orchestrator/src/services/comfyui.js`). Pipeline de **dos fases**:
+
+1. **Texto (QwenVL GGUF)** — workflow `EspejoIA_Qwen text generation.json`: foto → `prompt_en` (nodo 10), `descripcion` (nodo 11), `prompt_es` (nodo 12). Se streamean al frontend como `stream_chunk`.
+2. **Imagen (Z-Image Turbo)** — workflow `EspejoIA_image.json`: foto + `prompt_en` → contornos, pasos intermedios y retrato final. Se dispara apenas llega `prompt_en`.
+
+**Convención de prefijos de SaveImage (workflow de imagen):**
+- `Espejo_Final` → el retrato completo. El orquestador lo elige por prefijo **y** `type === 'output'` (para no agarrar el `temp` del PreviewImage que era un paso intermedio).
+- `Espejo_Step` → pasos intermedios del denoise (nodo 60). Se envían al frontend como `gen_preview` (progresión noise → final).
+- `Canny` → contornos (nodo 56). Se envían como `canny_ready` apenas están listos.
+
+**Eventos hacia el frontend:**
+- `gen_preview` → frames de denoise (bpreview en vivo por WS + replay de `Espejo_Step` ordenados) con `step`/`total_steps`.
+- `final_portrait` → retrato final real (`Espejo_Final`).
+- `canny_ready` → contornos.
+
+**Rendimiento:** RAM Cleanup desactivado en el workflow de imagen → los modelos de Z-Image Turbo quedan en VRAM entre ejecuciones. El nodo QwenVL `AILab_QwenVL_GGUF_PromptEnhancer` se recarga por corrida (ComfyUI crea instancia nueva por ejecución; no expone `keep_model_loaded`) — aceptado.
+
+**Nota:** El warning `Error: extra_pnginfo[0] is not a dict or missing 'workflow' key` en la consola de ComfyUI es inofensivo — los PNG no llevan el workflow embebido, pero la generación no se afecta.
 
 ---
 
@@ -214,18 +229,18 @@ Se mantiene el bridge Node.js ya construido (workflow vía websocket). Cambios n
                │
                ▼
     ┌─────────────────────────────────────────────────────────────┐
-    │                     OLLAMA (Qwen3-VL)                       │
+    │              COMFYUI — TEXTO (QwenVL GGUF)                  │
     │   Recibe: foto + system prompt                              │
-    │   Produce: pensamiento_es + prompt_en + prompt_es           │
+    │   Produce: descripcion + prompt_en + prompt_es              │
     │   Streaming: chunks → frontend como stream_chunk            │
     └──────────┬──────────────────────────────────────────────────┘
                │ prompt_en
                ▼
     ┌─────────────────────────────────────────────────────────────┐
-    │              COMFYUI (Z-Image Turbo + ControlNet)           │
+    │              COMFYUI — IMAGEN (Z-Image Turbo)               │
     │   Recibe: foto + prompt_en                                  │
-    │   Workflow: ControlNet (canny/softedge) + Z-Image Turbo     │
-    │   Produce: previews (step → gen_preview) + retrato final    │
+    │   Workflow: Canny/Lineart + Z-Image Turbo (KSamplerProgress)│
+    │   Produce: Espejo_Step (pasos → gen_preview) + Espejo_Final │
     └──────────┬──────────────────────────────────────────────────┘
                │ retrato generado (source_face)
                ▼

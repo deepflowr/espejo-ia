@@ -6,8 +6,9 @@ echo ========================================
 echo.
 
 :: Start Vision Service (port 3001)
+:: IMPORTANT: use .venv-swap (GPU + face swap), NOT .venv (old CPU env, swap fails silently)
 echo [1/3] Starting Vision Service...
-start "Vision Service" cmd /c "cd /d "%~dp0" && .venv\Scripts\python.exe vision-service\src\vision_server.py"
+start "Vision Service" cmd /c "cd /d "%~dp0" && .venv-swap\Scripts\python.exe vision-service\src\vision_server.py"
 
 :: Wait a moment for vision service to initialize
 timeout /t 3 /nobreak >nul
