@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>El Espejo — Tu souvenir</title>
+  <!-- PLACEHOLDER (2026-09-06): mini-página del form de mail a la que apunta el QR.
+       Lee ?session=<id> de la URL y, al enviar, hace POST /api/sessions/<id>/email -->
+</head>
+<body>
+  <h1>Tu souvenir de El Espejo</h1>
+  <p>Dejanos tu mail y te lo enviamos con tu retrato.</p>
+  <form id="souvenir-form">
+    <input type="email" id="email" placeholder="tu@mail.com" required />
+    <button type="submit">Recibir mi souvenir</button>
+  </form>
+  <p id="status"></p>
+
+  <script>
+    // TODO: implementar — parsear ?session=, validar email, POST al API
+  </script>
+</body>
+</html>

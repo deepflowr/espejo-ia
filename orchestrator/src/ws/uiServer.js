@@ -7,7 +7,7 @@
 
 const { STATES } = require('../stateMachine');
 
-function setupUiServer(wss, stateMachine, visionClient, getSessionId) {
+function setupUiServer(wss, stateMachine, visionClient, getSessionId, sessionStore) {
   wss.on('connection', (ws) => {
     console.log('Frontend connected via WebSocket');
 
@@ -21,17 +21,32 @@ function setupUiServer(wss, stateMachine, visionClient, getSessionId) {
 
         if (data.type === 'hello') {
           console.log('Frontend greeted, ready.');
+          const sessionId = getSessionId();
           // If we're in a state that requires a session but none exists, reset
           const needsSession = [STATES.CONGELADO, STATES.LECTURA];
-          if (needsSession.includes(stateMachine.state) && !getSessionId()) {
+          if (needsSession.includes(stateMachine.state) && !sessionId) {
             console.log('Stale session detected — resetting to REPOSO');
             stateMachine.reset();
           }
-          // If flow completed (GENERACION+), reset for next run
-          const completedStates = [STATES.GENERACION, STATES.REVELACION, STATES.ESPEJO_ACTIVO, STATES.SOUVENIR, STATES.CIERRE];
-          if (completedStates.includes(stateMachine.state)) {
-            console.log('Previous flow completed — resetting to REPOSO');
-            stateMachine.reset();
+          // Si hay una sesión activa a mitad/después del flujo, NO matar el flujo
+          // por una recarga del frontend: reenviar datos para que la pantalla resuma.
+          const midFlow = [STATES.CONGELADO, STATES.LECTURA, STATES.GENERACION, STATES.REVELACION, STATES.ESPEJO_ACTIVO, STATES.SOUVENIR, STATES.CIERRE];
+          if (sessionId && midFlow.includes(stateMachine.state)) {
+            const s = sessionStore.get(sessionId);
+            const resume = { type: 'session_resume', state: stateMachine.state };
+            if (s) {
+              if (s.photo) resume.photo_b64 = s.photo;
+              if (s.portrait) resume.portrait_b64 = s.portrait;
+            }
+            ws.send(JSON.stringify(resume));
+            console.log(`Frontend resumed session ${sessionId} (${stateMachine.state})`);
+          } else if (stateMachine.state !== STATES.REPOSO) {
+            // Sin sesión activa: flujo viejo/estancado → reset para la próxima corrida
+            const completedStates = [STATES.GENERACION, STATES.REVELACION, STATES.ESPEJO_ACTIVO, STATES.SOUVENIR, STATES.CIERRE];
+            if (completedStates.includes(stateMachine.state)) {
+              console.log('Previous flow completed — resetting to REPOSO');
+              stateMachine.reset();
+            }
           }
         }
         if (data.type === 'continue') {

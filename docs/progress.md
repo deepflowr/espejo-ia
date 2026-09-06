@@ -188,19 +188,107 @@ espejo/
 **PENDIENTE — Parpadeo constante en el reflejo (a pulir la próxima)**
 - El reflejo aparece pero **parpadea todo el tiempo** (alterna entre cara swapada y cámara normal).
 - **Hipótesis principal:** en `orchestrator/src/ws/visionClient.js`, el branch binario hace `this.onFrame?.(raw)` **y además** `this.onSwapFrame?.(b64)` para CADA frame de cámara. Entonces en ESPEJO_ACTIVO el orquestador emite `swap_frame` por dos vías: (a) los frames swapados reales (eventos JSON `swap_frame` del vision service) y (b) cada frame crudo de cámara **sin swapear**. El frontend (`swapImgEl.src`) muestra el último que llega → alterna swapeado/no-swapeado → parpadeo.
-- **Fix propuesto (no aplicado):** en `visionClient.js` quitar `this.onSwapFrame?.(b64)` del branch binario — los binary frames van SOLO a `onFrame` (preview); el `swap_frame` debe venir únicamente de los eventos JSON del vision service. Alternativa: gatear para no reenviar binarios como swap cuando el swap está activo.
+- **Fix aplicado (2026-08-15):** en `visionClient.js` se quitó `this.onSwapFrame?.(b64)` del branch binario — los binary frames van SOLO a `onFrame` (preview); el `swap_frame` viene únicamente de los eventos JSON del vision service. **(Pendiente de validar en el flujo completo.)**
 - Nota: el vision service manda ~30fps binarios y el swap_thread ~20fps de `swap_frame`, así que el frame crudo "pisa" al swapeado constantemente.
+
+### 2026-08-15 — Preview de cámara CONGELADO (capture thread muerto silenciosamente)
+
+**Síntoma:** el preview del frontend quedaba congelado (una imagen estática) pero TODO el pipeline seguía "vivo" a nivel de red:
+- Vision service respondía, conexión establecida, terminal sin errores.
+- El orquestador reenviaba frames binarios a cualquier cliente (49 en 3s).
+- El navegador recibía los frames binarios, las imágenes cargaban (`img.onload` disparaba), `drawImage` dibujaba imágenes nuevas al canvas de cámara.
+- PERO el contenido del canvas no cambiaba: `_test_frames.py` con hash MD5 mostró **55 frames recibidos, 1 solo contenido único, mismo tamaño exacto** → el vision service mandaba el MISMO frame 15/s.
+
+**Root cause:** en `vision-service/src/vision_server.py`, `capture_thread()` hacía `ret, frame = cap.read()` y ante un único `not ret` hacía `break` → el hilo **moría permanentemente** (daemon, sin error visible). `video_buffer` quedaba con el último frame y `send_loop` lo re-enviaba para siempre. La cámara 4K MJPG (2160×3840) es propensa a glitchear y devolver un read fallido transitorio (posiblemente potenciado por el uso de GPU del swap_thread).
+
+**Fix:** `capture_thread()` ahora es resiliente:
+- Ante un `cap.read()` fallido: reintenta (no `break`).
+- Después de 5 fallos consecutivos: `cap.release()` + **reabre la cámara** (`open_camera()`), con logs `[capture] ...`.
+- Solo abandona si no puede abrir ninguna cámara.
+
+**Validación:** tras reiniciar el vision service, `_test_frames.py` mostró **45 frames, 45 contenidos únicos** (cámara viva), y el flujo completo avanzó solo (captura → descripción → LECTURA → "Generando prompt...").
+
+**Lección:** cualquier hilo daemon con un `break` en un loop de captura/cámara congela el sistema silenciosamente. Preferir reintento + reapertura antes que morir. Para diagnosticar frames congelados: contar frames **y comparar contenido** (hash), no solo contar.
+
+### 2026-08-15 — Calidad del swap mejorada (halo pixelado)
+
+**Síntoma:** el reflejo (ESPEJO_ACTIVO) se veía bien pero con un **halo pixelado alrededor de la cara**.
+
+**Root cause:** `swap_thread()` bajaba el frame a **max dim 960** antes del swap (cámara 2160×3840 → 540×960) y el frontend muestra el reflejo fullscreen a 1080×1920 → **estirar 2x = pixelado**. Sumado a JPEG calidad 85 (artefactos de compresión) y downscale con `INTER_LINEAR` (más suave).
+
+**Fix (en `vision_service/src/vision_server.py`):**
+- `SWAP_MAX_DIM = 1920` (antes 960) → el swap se genera a **1080×1920 nativo** del frontend.
+- `SWAP_JPEG_QUALITY = 92` (antes 85) → menos artefactos alrededor de la cara.
+- Downscale con `cv2.INTER_AREA` (más nítido al reducir que `INTER_LINEAR`).
+- El costo GPU es casi el mismo: inswapper_128 es invariante a la resolución (cara 128×128); solo sube el costo de paste-back + encode.
+
+**Nota:** el "halo" clásico de inswapper_128 (costura en mandíbula/cabello por el modelo 128×128) puede persistir en menor medida incluso a 1080p. La solución aplicada es **GFPGAN** (ver sección siguiente).
+
+### 2026-08-15 — GFPGAN integrado: la cara deja de estar pixelada
+
+**Síntoma:** tras subir a 1080×1920, la cara seguía pixelada. Causa: **inswapper_128** genera la cara a 128×128 y la estira al tamaño real de la cara en el frame (~3-4x) → cara blanda/bloqueada.
+
+**Solución: GFPGANv1.4 post-swap** (restauración facial con detalle real a 512×512).
+- Modelo ONNX descargado de HuggingFace (`Meeperomi/GFPGANv1.4-onnx`, 324MB) → `vision-service/models/GFPGANv1.4.onnx`. Corre con el **onnxruntime-gpu** existente (sin instalar torch).
+- Nuevo módulo `vision-service/src/face_enhancer.py`: alinea la cara a 512×512 con el template estándar (los 5 landmarks de insightface coinciden en orden con el template de GFPGAN), corre el modelo, invierte el warp y blendee con máscara elíptica difuminada.
+- Se integra en `swapper.py` (`ENHANCE_FACE = True`) — configurable.
+
+**Resultado de calidad:** nitidez de la cara +54% (varianza Laplacian 1.7 → 2.7 a 1080×1920). El halo se elimina porque GFPGAN re-blendea toda la cara (frente + mejillas) con detalle real.
+
+**Rendimiento — optimizaciones para no matar la fps (0.8 → 4.4 fps en servicio):**
+1. **Detección del target solo con SCRFD**: `allowed_modules=["detection"]` — el inswapper solo usa `bbox + kps` del target (el embedding lo da el source). Antes `app.get()` corría 4 modelos extra por frame (~328ms).
+2. **Paste-back propio liviano**: el `paste_back` nativo de inswapper hace erode/dilate/doble blur sobre TODO el frame 1080×1920 (~124ms). Ahora: `paste_back=False` + warpAffine + máscara elíptica en la región de la cara (~15ms).
+3. **Máscaras con feather a baja resolución**: el GaussianBlur del blend con kernel gigante costaba ~73ms; ahora el feather se calcula a 1/8 y se re-escala.
+4. **send_loop pausa el encode 4K del preview durante ESPEJO_ACTIVO** (el reflejo tapa el preview; libera CPU/GPU).
+
+**Costos reales (1080×1920):** SCRFD 8ms + inswapper forward 22ms + GFPGAN 40ms + blend ~10ms ≈ 230-300ms/frame → **4.3-4.4 fps** con calidad GFPGAN. Sin GFPGAN: ~6fps (toggle `ENHANCE_FACE`).
+
+**Notas:**
+- El modelo GFPGANv1.4.onnx (324MB) NO está en git (agregar a .gitignore si no está).
+- El face enhancer usa `cv2.estimateAffinePartial2D` con los kps de SCRFD (orden coincide con el FACE_TEMPLATE).
 
 **Notas de entorno (recurrentes):**
 - Los DLLs de cuDNN/CUDA pueden faltar en `onnxruntime/capi` → recopiar de `torch\lib` de ComfyUI (ver Bug 5).
 - Verificar siempre que solo UN vision service (`.venv-swap`) tenga el puerto 3001.
 - El vision service crashea (exit code 1) si un error no capturado ocurre en `recv_loop` → dejar los comandos de swap protegidos con try/except (ya está).
 
+### 2026-08-16 — Transición de entrada al espejo + resume de sesión
+
+**Estado del swap:** validado end-to-end y funcionando (cara nítida con GFPGAN, sin espejado, sin sombras negras, ~5-6fps). El fix del parpadeo también quedó validado (reflejo estable).
+
+**1. Transición de entrada a ESPEJO_ACTIVO (vórtice → polaroid crece → cobra vida)**
+
+Diseño acordado con el usuario (artístico): el paso de la revelación al reflejo ya no es un corte seco, sino una transición lenta de "espacio latente".
+
+- **Fase 1 — Vórtice (~8s):** todo el contenido del espacio latente (textos flotantes de la descripción, preguntas, fotos/polaroids flotantes, pedazos de cara wireframe `faceAssembly`) se chupa en espiral hacia la **posición de la cara** (tracking en vivo), encogiéndose y desvaneciéndose. Las cajas DOM (`#lectura-thinking`, `#prompt-box`, `#lectura-photo`, `#lectura-status`) también giran y se funden hacia ese punto.
+- **Fase 2 — Polaroid crece:** el retrato generado (polaroid central) se despega del stage de revelación, crece hasta ~68% del ancho y **sigue la cara** en tiempo real (tracking espejado), con una respiración sutil. Llena la espera mientras cargan los modelos (~8s).
+- **Fase 3 — Cobra vida (~5s):** cuando llega `swap_status ready`, la polaroid se **expande a pantalla completa con distorsión de entrada** (wobble que se asienta) mientras el reflejo en vivo se funde encima.
+
+Cambios:
+- `orchestrator/src/ws/visionClient.js` + `index.js`: se reenvía `swap_status` del vision service al frontend (antes caía en "Unknown event"). Es el trigger de "cobra vida".
+- `frontend/src/layers/face-assembly.ts`: método `vortex(target, ease)` que chupa las instancias hacia un punto.
+- `frontend/src/main.ts`: estado de transición (`espejoTransition`, `espejoReady`, `espejoVortexT`, `espejoCobraT`), funciones `beginEspejoTransition`/`beginEspejoCobraVida`/`endEspejoTransition`, `faceWorldTarget` (convierte la posición normalizada de la cara a coordenadas 3D), `mirroredFaceScreenPos`, `vortexDomElements`, y el bloque en `animate()` que conduce vórtice + polaroid + cobra vida. Gates a los spawns del espacio latente durante la transición.
+- **Velocidad:** la convergencia es por SEGUNDO (basada en `dt`), no por-frame exponencial (que convergía en ~0.5s sin importar la duración). Todo ~5x más lento que la primera versión (usuario: "espacio latente, todo va lento pero sin sentirse trabado"). Constantes: `VORTEX_DURATION=8`, `POLAROID_GROW_SPEED=0.35`, `COBRA_DURATION=5`, `VORTEX_SWIRL_RATE=2.6`.
+
+**2. Fallo en la revelación (mostraba solo el resultado y no avanzaba) — causa y fix**
+
+- **Causa (vía logs):** la captura NUNCA fallaba ("Photo saved" siempre). Los fallos eran por **recargas del navegador (HMR de Vite)** disparadas por ediciones dev a `main.ts`. Cada recarga borraba el estado del frontend (foto capturada, retrato) y el orquestador, al ver reconectarse al frontend a mitad de flujo, **reseteaba a REPOSO** ("Previous flow completed — resetting to REPOSO"). Por eso la revelación mostraba solo el resultado (foto original perdida = `capturedPhotoBase64` null) y no avanzaba (flujo reseteado).
+- **Fix — resume de sesión (recarga no mata el flujo):**
+  - Frontend: persiste `capturedPhotoBase64` y `finalPortraitBase64` en `sessionStorage` (`espejo_photo`, `espejo_portrait`) y los restaura al iniciar.
+  - Orquestador (`uiServer.js`): en `hello`, si hay sesión activa a mitad/después del flujo, envía `session_resume` con `photo_b64` + `portrait_b64` (NO resetea a REPOSO). Solo resetea si NO hay sesión.
+  - Frontend: maneja `session_resume` — rehidrata; si está en REVELACIÓN re-dispara `doRevealPortrait()` (salta al layout final con las dos polaroids); si está en ESPEJO_ACTIVO muestra el reflejo directo (sin transición).
+  - Se limpia `sessionStorage` al volver a REPOSO.
+
+**3. Estado del sistema (2026-08-16):**
+- Todos los servicios funcionando: orquestador (3000), vision service (3001, `.venv-swap`), frontend (5173), ComfyUI (8188).
+- Typecheck TS: OK. Sintaxis orquestador: OK.
+
 ### Pending
 
-- **Face swap — pulir el parpadeo** del reflejo (ver hipótesis/fix propuesto arriba). El swap ya funciona end-to-end.
+- **Calibrar la transición** — duraciones/tamaños/intensidad del vórtice según pruebas de piso del usuario.
 - **SOUVENIR + mail** — endpoint REST existe, `mail.js` es stub.
 - **CIERRE** — Not implemented.
+- **Disolución** (estado 10 del UX flow) — la cara generada se desintegra de vuelta al ruido al cerrar.
 
 ### Key Fixes Applied
 

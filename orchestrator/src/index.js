@@ -224,8 +224,13 @@ visionClient.onFaceTracking = (data) => {
   broadcast(data);
 };
 
+// Forward swap readiness so the frontend knows when to 'come alive'
+visionClient.onSwapStatus = (data) => {
+  broadcast({ type: 'swap_status', ...data });
+};
+
 // ─── WebSocket server (frontend) ──────────────────────────────
-setupUiServer(wss, stateMachine, visionClient, () => currentSessionId ? sessionStore.has(currentSessionId) ? currentSessionId : null : null);
+setupUiServer(wss, stateMachine, visionClient, () => currentSessionId ? sessionStore.has(currentSessionId) ? currentSessionId : null : null, sessionStore);
 
 // ─── REST routes ──────────────────────────────────────────────
 const souvenirRoute = require('./routes/souvenir');

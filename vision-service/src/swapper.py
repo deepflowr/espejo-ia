@@ -17,8 +17,14 @@ import threading
 import cv2
 import numpy as np
 
+from face_enhancer import FaceEnhancer
+
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 INSWAPPER_PATH = os.path.join(MODELS_DIR, "inswapper_128.onnx")
+
+# Post-swap face enhancement (GFPGANv1.4). Removes the inswapper 128px
+# pixelation. Can be disabled if fps needs to be maximized.
+ENHANCE_FACE = True
 
 # onnxruntime providers: CUDA first, CPU fallback
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -29,11 +35,13 @@ class FaceSwapper:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._app = None
+        self._app = None          # FaceAnalysis completa (source face: necesita embedding)
+        self._app_detect = None   # Solo SCRFD (target por frame: bbox + kps, mucho mas rapido)
         self._swapper = None
         self._source_face = None
         self.ready = False
         self.error = None
+        self._enhancer = None
 
     # ─── Model loading (lazy, first use) ──────────────────────
     def _ensure_models(self):
@@ -58,9 +66,16 @@ class FaceSwapper:
         # det_size 320: SCRFD falla con tamaños grandes en este setup
         # (640/960/1280 dan score ~0.05; 320 detecta confiable ~0.86)
         self._app.prepare(ctx_id=0, det_size=(320, 320))
+
+        # Modelo SOLO de detección para el target por frame: el inswapper solo
+        # necesita bbox + kps del target (el embedding lo da el source), así que
+        # evitamos correr landmarks/genderage/recognition en CADA frame (era ~328ms).
+        self._app_detect = FaceAnalysis(name="buffalo_l", allowed_modules=["detection"], providers=PROVIDERS)
+        self._app_detect.prepare(ctx_id=0, det_size=(320, 320))
+
         self._swapper = insightface.model_zoo.get_model(INSWAPPER_PATH, providers=PROVIDERS)
         self.ready = True
-        print("[FaceSwapper] models loaded (buffalo_l + inswapper_128)")
+        print("[FaceSwapper] models loaded (buffalo_l detect + inswapper_128)")
 
     # ─── Source face (the generated portrait) ─────────────────
     def set_source(self, image_b64: str) -> bool:
@@ -102,12 +117,40 @@ class FaceSwapper:
             return None
         with self._lock:
             try:
-                faces = self._app.get(frame_bgr)
-                if not faces:
+                # Solo SCRFD para el target (bbox + kps) — mucho más rápido
+                from insightface.app.common import Face
+                bboxes, kpss = self._app_detect.det_model.detect(frame_bgr)
+                if bboxes.shape[0] == 0:
                     return frame_bgr  # no face → passthrough
-                faces.sort(key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]), reverse=True)
-                target = faces[0]
-                return self._swapper.get(frame_bgr, target, self._source_face, paste_back=True)
+                # largest face first
+                areas = (bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1])
+                idx = int(np.argmax(areas))
+                target = Face(
+                    bbox=bboxes[idx, 0:4],
+                    kps=(kpss[idx] if kpss is not None else None),
+                    det_score=float(bboxes[idx, 4]),
+                )
+                if target.kps is None:
+                    return frame_bgr
+
+                # Paste-back NATIVO de inswapper: su máscara (img_white) se deriva
+                # del contenido real del fake_face → NUNCA deja negro alrededor.
+                # (Mi paste custom rellenaba negro fuera de la cara y ese negro
+                # entraba al crop de GFPGAN → sombras negras en el rostro.)
+                result = self._swapper.get(frame_bgr, target, self._source_face, paste_back=True)
+                if result is None:
+                    return frame_bgr
+
+                # GFPGAN post-processing: kill the inswapper 128px pixelation
+                if ENHANCE_FACE:
+                    try:
+                        if self._enhancer is None:
+                            self._enhancer = FaceEnhancer()
+                        result = self._enhancer.enhance(result, target)
+                    except Exception as e:
+                        print(f"[FaceSwapper] enhance error: {e}")
+
+                return result
             except Exception as e:
                 self.error = str(e)
                 print(f"[FaceSwapper] swap error: {e}")

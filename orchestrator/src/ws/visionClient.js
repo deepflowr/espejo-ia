@@ -19,6 +19,7 @@ class VisionClient {
     this.onSwapFrame = null;
     this.onFrame = null; // raw binary frame for live preview
     this.onFaceTracking = null; // normalized face coordinates
+    this.onSwapStatus = null; // {active, ready} — el swap está listo para mostrarse
   }
 
   connect() {
@@ -35,12 +36,12 @@ class VisionClient {
         const data = JSON.parse(raw);
         this._handleEvent(data);
       } catch {
-        // Binary frame (raw JPEG) — forward for live preview
+        // Binary frame (raw JPEG) — forward ONLY for live preview.
+        // Los frames swapados vienen EXCLUSIVAMENTE como JSON swap_frame
+        // del vision service (si reenviáramos binarios como swap_frame,
+        // el frontend alternaría entre swapeado y sin swapear → parpadeo).
         if (raw instanceof Buffer) {
           this.onFrame?.(raw);
-          // Also try as swap_frame (base64) for the orchestrator
-          const b64 = raw.toString('base64');
-          this.onSwapFrame?.(b64);
         }
       }
     });
@@ -71,6 +72,9 @@ class VisionClient {
         break;
       case 'face_tracking':
         this.onFaceTracking?.(data);
+        break;
+      case 'swap_status':
+        this.onSwapStatus?.(data);
         break;
       default:
         console.log('Unknown event from Vision Service:', data.type);

@@ -98,7 +98,7 @@ export async function createFaceFragments(scene: THREE.Scene): Promise<{
   console.log(`Loaded ${wireframeGeos.length} face-part wireframes`);
 
   if (wireframeGeos.length === 0) {
-    return { update: () => {}, clear: () => {} };
+    return { update: () => {}, clear: () => {}, setVisible: () => {} };
   }
 
   // ─── Create instances across the full frustum ────────────

@@ -400,9 +400,30 @@ export async function createFaceAssembly(scene: THREE.Scene) {
     instances.length = 0;
   }
 
+  // Vórtice de entrada al espejo: cada instancia se chupa hacia el punto objetivo
+  // (la cara), girando, encogiéndose y desvaneciéndose. `ease` va de 0→1.
+  function vortex(target: THREE.Vector3, ease: number) {
+    for (const inst of instances) {
+      const g = inst.group;
+      const k = 0.18 + ease * 0.72;
+      g.position.x += (target.x - g.position.x) * k;
+      g.position.y += (target.y - g.position.y) * k;
+      g.position.z += (target.z - g.position.z) * (0.10 + ease * 0.5);
+      g.rotation.x += 0.03 + 0.02 * ease;
+      g.rotation.z += 0.03 + 0.02 * ease;
+      const sc = Math.max(0.001, inst.lines.scale.x * 0.96);
+      inst.lines.scale.setScalar(sc);
+      inst.ghost.scale.setScalar(sc * 1.02);
+      const mat = inst.lines.material as THREE.LineBasicMaterial;
+      mat.opacity = Math.min(mat.opacity, (1 - ease) * 0.5);
+      (inst.ghost.material as THREE.LineBasicMaterial).opacity = mat.opacity * 0.3;
+    }
+  }
+
   return {
     update,
     clear,
+    vortex,
     getPhase: () => 'active',
     getAttemptCount: () => attemptCount,
   };

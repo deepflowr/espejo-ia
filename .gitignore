@@ -5,6 +5,7 @@ orchestrator/node_modules/
 __pycache__/
 *.pyc
 .venv/
+.venv-swap/
 
 # InsightFace / Vision models (downloadable)
 .insightface/

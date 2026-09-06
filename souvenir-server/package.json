@@ -1,0 +1,11 @@
+{
+  "name": "souvenir-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Servidor remoto del souvenir de El Espejo — recibe assets, captura el mail y envía por SMTP. PLACEHOLDER, sin implementar.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {}
+}

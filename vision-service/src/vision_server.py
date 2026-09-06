@@ -31,6 +31,8 @@ STREAM_SCALE = 1.0    # full resolution (no downscale)
 JPEG_QUALITY = 85     # higher quality for HD
 CROP_TO_9_16 = False   # already native 9:16 portrait
 CAMERA_INDEX = 1        # 0 = built-in, 1 = Raptor Vision 4K (2160x3840 portrait via MJPG)
+SWAP_MAX_DIM = 1920    # swap output target: frontend muestra 1080x1920 nativo (antes 960 -> 540x960 estirado a 2x = pixelado)
+SWAP_JPEG_QUALITY = 92 # menos artefactos de compresión alrededor de la cara
 
 
 # ─── Thread-safe event queue ───────────────────────────────────
@@ -80,47 +82,74 @@ swap_active = False  # True while ESPEJO_ACTIVO runs
 
 
 def capture_thread():
-    """Captures frames as fast as possible — no blocking."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        alt = 0 if CAMERA_INDEX == 1 else 1
-        print(f"Camera {CAMERA_INDEX} failed, trying {alt}...")
-        cap = cv2.VideoCapture(alt)
-    if not cap.isOpened():
+    """Captures frames as fast as possible — no blocking.
+
+    Resilient: previously a single transient cap.read() failure `break`-ed and
+    killed this thread permanently, freezing the preview with the last frame.
+    Now it retries, and after sustained failures it re-opens the camera so the
+    preview never stays frozen on a camera glitch.
+    """
+    def open_camera():
+        cap = cv2.VideoCapture(CAMERA_INDEX)
+        if not cap.isOpened():
+            alt = 0 if CAMERA_INDEX == 1 else 1
+            print(f"Camera {CAMERA_INDEX} failed, trying {alt}...")
+            cap = cv2.VideoCapture(alt)
+        if cap.isOpened():
+            # Force MJPG codec for 4K support, then set resolution
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2160)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 3840)
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"Camera opened: {w}x{h} (4K portrait)")
+        return cap
+
+    cap = open_camera()
+    if cap is None or not cap.isOpened():
         print("Error: Could not open any video device.")
         return
-    # Force MJPG codec for 4K support, then set resolution
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2160)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 3840)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"Camera opened: {w}x{h} (4K portrait)")
 
+    consecutive_failures = 0
     while True:
         ret, frame = cap.read()
         if not ret or frame is None:
-            break
-
-        if CAMERA_ROTATION is not None:
-            frame = cv2.rotate(frame, CAMERA_ROTATION)
-        # No backend flip — frontend handles mirror via canvas scale(-1,1)
-
-        # Center-crop to 9:16 portrait (extract middle region)
-        if CROP_TO_9_16:
-            h, w = frame.shape[:2]
-            target_w = int(h * 9 / 16)
-            if target_w < w:
-                x_start = (w - target_w) // 2
-                frame = frame[:, x_start:x_start + target_w]
+            consecutive_failures += 1
+            if consecutive_failures >= 5:
+                print(f"[capture] {consecutive_failures} reads fallidos seguidos — reabriendo cámara...")
+                cap.release()
+                time.sleep(0.5)
+                cap = open_camera()
+                if cap is None or not cap.isOpened():
+                    print("[capture] no se pudo reabrir la cámara, reintentando en 2s...")
+                    time.sleep(2)
+                    continue
+                consecutive_failures = 0
             else:
-                # If frame is already tall enough, crop height instead
-                target_h = int(w * 16 / 9)
-                if target_h < h:
-                    y_start = (h - target_h) // 2
-                    frame = frame[y_start:y_start + target_h, :]
+                time.sleep(0.05)
+                continue
+        else:
+            consecutive_failures = 0
 
-        video_buffer.update(frame)
+            if CAMERA_ROTATION is not None:
+                frame = cv2.rotate(frame, CAMERA_ROTATION)
+            # No backend flip — frontend handles mirror via canvas scale(-1,1)
+
+            # Center-crop to 9:16 portrait (extract middle region)
+            if CROP_TO_9_16:
+                h, w = frame.shape[:2]
+                target_w = int(h * 9 / 16)
+                if target_w < w:
+                    x_start = (w - target_w) // 2
+                    frame = frame[:, x_start:x_start + target_w]
+                else:
+                    # If frame is already tall enough, crop height instead
+                    target_h = int(w * 16 / 9)
+                    if target_h < h:
+                        y_start = (h - target_h) // 2
+                        frame = frame[y_start:y_start + target_h, :]
+
+            video_buffer.update(frame)
 
     cap.release()
 
@@ -167,18 +196,20 @@ def swap_thread():
             continue
 
         t0 = time.time()
-        # Downscale before swap (4K is wasteful for inswapper) → max dim ~960
+        # Downscale to the frontend's native display res (1080x1920) so the
+        # reflection isn't upscaled 2x and pixelated. INTER_AREA for sharper
+        # downscale than INTER_LINEAR.
         h, w = frame.shape[:2]
-        scale = min(1.0, 960 / max(h, w))
+        scale = min(1.0, SWAP_MAX_DIM / max(h, w))
         if scale < 1.0:
-            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
         swapped = swapper.swap(frame)
         if swapped is None:
             time.sleep(0.02)
             continue
 
-        ok, buf = cv2.imencode('.jpg', swapped, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        ok, buf = cv2.imencode('.jpg', swapped, [cv2.IMWRITE_JPEG_QUALITY, SWAP_JPEG_QUALITY])
         if ok:
             event_queue.push({"type": "swap_frame", "image_b64": base64.b64encode(buf).decode('utf-8')})
 
@@ -254,25 +285,30 @@ async def handler(websocket):
 
     async def send_loop():
         """Continuously send annotated frames + pending events."""
+        global swap_active
         try:
             while True:
                 for event in event_queue.pop_all():
                     await websocket.send(json.dumps(event))
 
-                frame = video_buffer.get_frame()
-                if frame is not None:
-                    raw = frame.copy()
-                    # Annotate with face box + hand landmarks + wave overlay
-                    raw = annotate_frame(raw)
-                    if STREAM_SCALE < 1.0:
-                        h, w = raw.shape[:2]
-                        new_w = int(w * STREAM_SCALE)
-                        new_h = int(h * STREAM_SCALE)
-                        raw = cv2.resize(raw, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                # Durante ESPEJO_ACTIVO el frontend muestra el swap feed (tapa el
+                # preview), así que NO vale la pena encode-ár el JPEG 4K del live
+                # preview — libera CPU/GPU para que el swap+GFPGAN vaya más rápido.
+                if not swap_active:
+                    frame = video_buffer.get_frame()
+                    if frame is not None:
+                        raw = frame.copy()
+                        # Annotate with face box + hand landmarks + wave overlay
+                        raw = annotate_frame(raw)
+                        if STREAM_SCALE < 1.0:
+                            h, w = raw.shape[:2]
+                            new_w = int(w * STREAM_SCALE)
+                            new_h = int(h * STREAM_SCALE)
+                            raw = cv2.resize(raw, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
-                    success, buffer = cv2.imencode('.jpg', raw, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-                    if success:
-                        await websocket.send(buffer.tobytes())
+                        success, buffer = cv2.imencode('.jpg', raw, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                        if success:
+                            await websocket.send(buffer.tobytes())
 
                 await asyncio.sleep(0.03)
         except websockets.exceptions.ConnectionClosed:

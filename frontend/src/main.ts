@@ -1319,6 +1319,22 @@ swapImgEl.style.cssText = [
 document.body.appendChild(swapImgEl);
 let espejoActive = false;
 
+// ─── Transición de entrada al espejo (vórtice → polaroid crece → cobra vida) ──
+// Espacio latente = todo va LENTO y soñado, pero con movimiento continuo (no trabado).
+const VORTEX_DURATION = 8.0;         // s — duración del vórtice del espacio latente
+const POLAROID_MAX_FRAC = 0.68;      // fracción del ancho de pantalla que alcanza la polaroid
+const POLAROID_GROW_SPEED = 0.35;    // qué tan rápido crece la polaroid (lento)
+const COBRA_DURATION = 5.0;          // s — expansión final + fundido al reflejo
+const VORTEX_SWIRL_RATE = 2.6;       // velocidad angular del espiral (lento, latente)
+const VORTEX_CONVERGE = 0.30;        // tasa/s de convergencia hacia la cara
+const VORTEX_SHRINK = 0.22;          // tasa/s de encogimiento de los elementos
+let espejoTransition = false;        // fase vórtice + polaroid siguiendo la cara (esperando swap)
+let espejoReady = false;             // swap listo → cobra vida
+let espejoVortexT = 0;               // progreso vórtice 0→1
+let espejoVortexClock = 0;           // reloj del espiral
+let espejoPolaroidSize = 0;          // tamaño px actual de la polaroid (creciendo)
+let espejoCobraT = 0;                // progreso expansión final 0→1
+
 let revealToken = 0;
 let revealDone = false;
 let revealActive = false;
@@ -1335,6 +1351,111 @@ function clearRevealStage() {
   revealReflectionLabel.style.display = 'none';
   revealStageEl.style.opacity = '0';
   setTimeout(() => { revealStageEl.style.display = 'none'; }, 800);
+}
+
+// ─── Espejo: transición de entrada (vórtice → polaroid crece → cobra vida) ──
+function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3); }
+function easeInOutCubic(t: number) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+
+/** Punto del mundo 3D donde está la cara en el plano z=depthZ (para el vórtice). */
+function faceWorldTarget(depthZ: number): THREE.Vector3 {
+  const ndcX = faceTracker.smoothedPos.x * 2 - 1;
+  const ndcY = -faceTracker.smoothedPos.y * 2 + 1;
+  const v = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+  const dir = v.sub(camera.position).normalize();
+  const t = Math.abs(dir.z) < 1e-6 ? 0 : (depthZ - camera.position.z) / dir.z;
+  return camera.position.clone().add(dir.multiplyScalar(t));
+}
+
+/** Posición de la cara en pantalla (normalizado 0-1, top-left, Y abajo, X espejada).
+ *  Si no hay cara detectada, cae al centro. */
+function mirroredFaceScreenPos() {
+  const p = faceTracker.smoothedPos;
+  const has = faceTracker.hasFace && faceTracker.smoothedSize > 0.01;
+  return { x: has ? 1 - p.x : 0.5, y: has ? p.y : 0.5 };
+}
+
+function beginEspejoTransition() {
+  espejoTransition = true;
+  espejoReady = false;
+  espejoVortexT = 0;
+  espejoVortexClock = 0;
+  espejoCobraT = 0;
+
+  // El stage de revelación queda visible; la polaroid del retrato sobrevive al vórtice.
+  revealStageEl.style.display = 'flex';
+  revealStageEl.style.opacity = '1';
+  revealTitleEl.style.display = 'none';
+  revealOriginalLabel.style.display = 'none';
+  revealOriginalWrap.style.display = 'none';
+  revealReflectionLabel.style.display = 'none';
+  revealSubEl.style.display = 'none';
+  revealCentralWrap.style.animation = 'none';
+  revealCentralWrap.style.position = 'fixed';
+  revealCentralWrap.style.margin = '0';
+
+  // Polaroid a tamaño inicial, sobre la cara (espejada).
+  const startSize = Math.min(window.innerWidth, window.innerHeight) * 0.38;
+  espejoPolaroidSize = startSize;
+  revealCentralWrap.style.width = startSize + 'px';
+  revealCentralWrap.style.height = startSize + 'px';
+  revealCentralWrap.style.padding = '10px';
+  const p = mirroredFaceScreenPos();
+  revealCentralWrap.style.left = (p.x * 100) + '%';
+  revealCentralWrap.style.top = (p.y * 100) + '%';
+  revealCentralWrap.style.transform = 'translate(-50%, -50%)';
+
+  // Los elementos DOM del espacio latente se chupan hacia la cara.
+  vortexDomElements();
+
+  // El reflejo NO se muestra todavía (espera el swap listo).
+  swapImgEl.style.display = 'none';
+  swapImgEl.style.opacity = '1';
+}
+
+function vortexDomElements() {
+  const fx = mirroredFaceScreenPos().x * 100;
+  const fy = mirroredFaceScreenPos().y * 100;
+  const ids = ['lectura-thinking', 'prompt-box', 'lectura-photo', 'lectura-status'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el || el.style.display === 'none') continue;
+    const r = el.getBoundingClientRect();
+    const cx = ((r.left + r.width / 2) / window.innerWidth) * 100;
+    const cy = ((r.top + r.height / 2) / window.innerHeight) * 100;
+    const dx = fx - cx;
+    const dy = fy - cy;
+    el.style.transition = 'transform 7.5s cubic-bezier(.45,-0.2,.6,1), opacity 7.5s ease';
+    el.style.transform = `translate(${dx}vw, ${dy}vh) scale(0.06) rotate(720deg)`;
+    el.style.opacity = '0';
+  }
+}
+
+function beginEspejoCobraVida() {
+  if (espejoReady) return;
+  espejoReady = true;
+  espejoTransition = false;   // termina la fase de espera
+  espejoCobraT = 0;
+  espejoVortexT = 1;
+  // Limpiar lo que haya quedado del espacio latente.
+  destroyDescriptionSprites();
+  destroyQuestionSprites();
+  destroyFaceSnapshots();
+  destroyStepPolaroids();
+  if (faceAssembly) faceAssembly.clear();
+  // Mostrar el reflejo invisible para fundirlo sobre la polaroid expandida.
+  swapImgEl.style.display = 'block';
+  swapImgEl.style.opacity = '0';
+}
+
+function endEspejoTransition() {
+  espejoTransition = false;
+  espejoReady = false;
+  espejoCobraT = 0;
+  espejoVortexT = 0;
+  swapImgEl.style.display = 'none';
+  swapImgEl.style.opacity = '1';
+  clearRevealStage();
 }
 
 /** Convert all background polaroids (steps + canny) to the final image. */
@@ -2014,6 +2135,9 @@ wsClient.onMessage = (data) => {
       enterLectura();
     } else if (data.state === 'REPOSO' && appState === 'lectura' && !LECTURA_DEBUG) {
       leaveLectura();
+      // Flujo terminado → limpiar la sesión persistida (no resumir un flujo viejo)
+      sessionStorage.removeItem('espejo_photo');
+      sessionStorage.removeItem('espejo_portrait');
     } else if (data.state === 'REPOSO' && appState === 'reposo') {
       // Hide welcome dialog when returning to REPOSO
       dialogActive = false;
@@ -2023,15 +2147,16 @@ wsClient.onMessage = (data) => {
       dialogEl.style.display = 'none';
       dialogEl.style.opacity = '0';
       hintEl.style.display = 'none';
+      sessionStorage.removeItem('espejo_photo');
+      sessionStorage.removeItem('espejo_portrait');
     }
     if (data.state === 'ESPEJO_ACTIVO') {
-      // Live face-swapped reflection
+      // Live face-swapped reflection — con transición de entrada (vórtice + polaroid)
       espejoActive = true;
-      clearRevealStage();
-      swapImgEl.style.display = 'block';
+      beginEspejoTransition();
     } else if (espejoActive) {
       espejoActive = false;
-      swapImgEl.style.display = 'none';
+      endEspejoTransition();
     }
     // For GENERACION+ states, stay in LECTURA visuals — don't revert to REPOSO
     if ((data.state === 'GENERACION' || data.state === 'REVELACION' || data.state === 'ESPEJO_ACTIVO') && appState === 'lectura') {
@@ -2043,11 +2168,43 @@ wsClient.onMessage = (data) => {
     // image_b64 llega SIN el prefijo data: — el navegador lo trataría como URL gigante (431)
     swapImgEl.src = `data:image/jpeg;base64,${data.image_b64}`;
   }
+  if (data.type === 'swap_status') {
+    // El swap terminó de cargar (modelos listos) → la polaroid 'cobra vida'
+    if (espejoActive && data.ready === true && !espejoReady) {
+      beginEspejoCobraVida();
+    }
+  }
   if (data.type === 'photo_captured') {
     capturedPhotoBase64 = `data:image/png;base64,${data.image_b64}`;
+    // Persistir para sobrevivir una recarga del navegador (resume de sesión)
+    sessionStorage.setItem('espejo_photo', data.image_b64 as string);
   }
   if (data.type === 'final_portrait') {
     finalPortraitBase64 = data.image_b64 as string;
+    sessionStorage.setItem('espejo_portrait', data.image_b64 as string);
+  }
+  if (data.type === 'session_resume') {
+    // El frontend se reconectó a mitad de flujo → recuperar los datos de la sesión
+    if (data.photo_b64) {
+      capturedPhotoBase64 = `data:image/png;base64,${data.photo_b64}`;
+      sessionStorage.setItem('espejo_photo', data.photo_b64 as string);
+    }
+    if (data.portrait_b64) {
+      finalPortraitBase64 = data.portrait_b64 as string;
+      sessionStorage.setItem('espejo_portrait', data.portrait_b64 as string);
+    }
+    if (data.state === 'REVELACION' && finalPortraitBase64 && !revealActive && !espejoActive) {
+      // Re-trigger la revelación final (salta directo al layout con las dos polaroids)
+      doRevealPortrait();
+    } else if (data.state === 'ESPEJO_ACTIVO') {
+      // El reflejo ya está activo: mostrarlo directo sin la transición de entrada
+      espejoActive = true;
+      espejoTransition = false;
+      espejoReady = true;
+      swapImgEl.style.display = 'block';
+      swapImgEl.style.opacity = '1';
+      clearRevealStage();
+    }
   }
   if (data.type === 'gen_preview' && typeof data.image_b64 === 'string' && data.image_b64.length > 0) {
     // Buffer denoise progression (noise → final) for the reveal — don't spoil the prompt/canny
@@ -2186,6 +2343,14 @@ function doCannyMorph() {
   const st5 = document.getElementById('lectura-status-main');
   if (st5) st5.textContent = '> Enviando contornos y prompt...';
 }
+
+// Rehidratar la sesión tras una recarga del navegador (para que el orquestador
+// pueda hacer session_resume y el reveal no quede sin la foto original).
+const savedPhoto = sessionStorage.getItem('espejo_photo');
+if (savedPhoto) capturedPhotoBase64 = `data:image/png;base64,${savedPhoto}`;
+const savedPortrait = sessionStorage.getItem('espejo_portrait');
+if (savedPortrait) finalPortraitBase64 = savedPortrait;
+
 wsClient.connect();
 // Handle binary camera frames from vision service (via orchestrator)
 wsClient.onBinary = (blob: Blob) => {
@@ -2422,7 +2587,8 @@ function animate() {
   if (appState === 'lectura') {
     try {
       revealMeshObj.updateReveal(dt);
-      if (faceAssembly) faceAssembly.update(time);
+      // Durante el vórtice, faceAssembly se conduce hacia la cara (no update normal)
+      if (faceAssembly && !espejoTransition) faceAssembly.update(time);
       if (analysisHUD) analysisHUD.update(time, dt);
 
       lecturaThinking.update(dt);
@@ -2608,8 +2774,8 @@ function animate() {
   }
 
   // ── Description sprites (continuous typing/drifting/fading) ──
-  // Spawn new ones periodically
-  if (appState === 'lectura' && descLinesPool.length > 0 && descSprites.length < DESC_SPRITE_COUNT) {
+  // Spawn new ones periodically (pausado durante el vórtice de entrada al espejo)
+  if (appState === 'lectura' && !espejoActive && descLinesPool.length > 0 && descSprites.length < DESC_SPRITE_COUNT) {
     if (Math.random() < 0.02) spawnDescSprite();
   }
 
@@ -3199,6 +3365,119 @@ function animate() {
   }
 
 
+
+  // ── Transición de entrada al espejo (vórtice → polaroid crece → cobra vida) ──
+  if (espejoActive) {
+    if (espejoTransition && !espejoReady) {
+      // VÓRTICE: el espacio latente (3D) se chupa hacia la cara
+      espejoVortexT = Math.min(1, espejoVortexT + dt / VORTEX_DURATION);
+      espejoVortexClock += dt;
+      const e = easeInOutCubic(espejoVortexT);
+      // Tasas por SEGUNDO (basadas en dt) → lento y soñado, nunca 'por-frame' rápido.
+      const ck = Math.min(1, dt * (VORTEX_CONVERGE + e * 0.5));          // convergencia
+      const ckz = Math.min(1, ck * 0.6);                                  // convergencia en z
+      const swAmt = 0.0025 * (1 - e);                                     // amplitud del espiral
+      const scF = Math.max(0.01, 1 - dt * (VORTEX_SHRINK + e * 0.35));    // encogimiento
+      const swirlX = (phase: number) => Math.sin(espejoVortexClock * VORTEX_SWIRL_RATE + phase) * swAmt;
+      const swirlY = (phase: number) => Math.cos(espejoVortexClock * VORTEX_SWIRL_RATE + phase) * swAmt;
+
+      for (const ds of descSprites) {
+        const target = faceWorldTarget(ds.sprite.position.z);
+        const sp = ds.sprite.position;
+        sp.x += (target.x - sp.x) * ck;
+        sp.y += (target.y - sp.y) * ck;
+        sp.z += (target.z - sp.z) * ckz;
+        sp.x += swirlX(ds.phase);
+        sp.y += swirlY(ds.phase);
+        ds.sprite.scale.multiplyScalar(scF);
+        ds.ghost.position.copy(sp);
+        ds.ghost.scale.copy(ds.sprite.scale).multiplyScalar(1.05);
+        ds.sprite.material.opacity = Math.min(ds.sprite.material.opacity, (1 - e) * 0.55);
+        ds.ghost.material.opacity = ds.sprite.material.opacity * 0.25;
+      }
+      for (const ds of questionSprites) {
+        const target = faceWorldTarget(ds.sprite.position.z);
+        const sp = ds.sprite.position;
+        sp.x += (target.x - sp.x) * ck;
+        sp.y += (target.y - sp.y) * ck;
+        sp.z += (target.z - sp.z) * ckz;
+        sp.x += swirlX(ds.phase);
+        sp.y += swirlY(ds.phase);
+        ds.sprite.scale.multiplyScalar(scF);
+        ds.ghost.position.copy(sp);
+        ds.sprite.material.opacity = Math.min(ds.sprite.material.opacity, (1 - e) * 0.35);
+        ds.ghost.material.opacity = ds.sprite.material.opacity * 0.2;
+      }
+      for (const fs of faceSnapshots) {
+        const target = faceWorldTarget(fs.mesh.position.z);
+        const mp = fs.mesh.position;
+        mp.x += (target.x - mp.x) * ck;
+        mp.y += (target.y - mp.y) * ck;
+        mp.z += (target.z - mp.z) * ckz;
+        mp.x += swirlX(fs.phase);
+        mp.y += swirlY(fs.phase);
+        fs.mesh.scale.multiplyScalar(scF);
+        fs.ghost.position.copy(mp).add(fs.ghostOffset);
+        fs.ghost.scale.copy(fs.mesh.scale).multiplyScalar(1.03);
+        (fs.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min((fs.mesh.material as THREE.MeshBasicMaterial).opacity, (1 - e) * 0.9);
+        (fs.ghost.material as THREE.MeshBasicMaterial).opacity = (fs.mesh.material as THREE.MeshBasicMaterial).opacity * 0.25;
+      }
+      for (const sp of stepPolaroids) {
+        const target = faceWorldTarget(sp.mesh.position.z);
+        const mp = sp.mesh.position;
+        mp.x += (target.x - mp.x) * ck;
+        mp.y += (target.y - mp.y) * ck;
+        mp.z += (target.z - mp.z) * ckz;
+        mp.x += swirlX(sp.phase);
+        mp.y += swirlY(sp.phase);
+        sp.mesh.scale.multiplyScalar(scF);
+        sp.ghost.position.copy(mp).add(sp.ghostOffset);
+        (sp.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min((sp.mesh.material as THREE.MeshBasicMaterial).opacity, (1 - e) * 0.9);
+      }
+      if (faceAssembly && typeof (faceAssembly as any).vortex === 'function') {
+        (faceAssembly as any).vortex(faceWorldTarget(-1.5), e);
+      }
+
+      if (espejoVortexT >= 1) {
+        destroyDescriptionSprites();
+        destroyQuestionSprites();
+        destroyFaceSnapshots();
+        destroyStepPolaroids();
+        if (faceAssembly) faceAssembly.clear();
+      }
+
+      // POLAROID: crece lento y sigue la cara (espejada), con respiración suave
+      const targetSize = window.innerWidth * POLAROID_MAX_FRAC;
+      espejoPolaroidSize += (targetSize - espejoPolaroidSize) * Math.min(1, dt * POLAROID_GROW_SPEED);
+      const breathe = 1 + 0.015 * Math.sin(time * 0.6);
+      revealCentralWrap.style.width = (espejoPolaroidSize * breathe) + 'px';
+      revealCentralWrap.style.height = (espejoPolaroidSize * breathe) + 'px';
+      const pf = mirroredFaceScreenPos();
+      revealCentralWrap.style.left = (pf.x * 100) + '%';
+      revealCentralWrap.style.top = (pf.y * 100) + '%';
+    } else if (espejoReady && espejoCobraT < 1) {
+      // COBRA VIDA: la polaroid se expande a pantalla completa con distorsión
+      // de entrada, mientras el reflejo en vivo se funde encima.
+      espejoCobraT = Math.min(1, espejoCobraT + dt / COBRA_DURATION);
+      const e = easeInOutCubic(espejoCobraT);
+      const full = Math.max(window.innerWidth, window.innerHeight) * 2.4;
+      const base = Math.max(espejoPolaroidSize, 1);
+      const s = 1 + e * (full / base - 1);
+      // distorsión de entrada: wobble horizontal lento que se asienta
+      const wobble = 1 + Math.sin(espejoCobraT * 8) * 0.10 * (1 - e);
+      revealCentralWrap.style.width = (base * s * wobble) + 'px';
+      revealCentralWrap.style.height = (base * s) + 'px';
+      revealCentralWrap.style.left = '50%';
+      revealCentralWrap.style.top = '50%';
+      revealCentralWrap.style.transform = `translate(-50%, -50%) rotate(${Math.sin(espejoCobraT * 6) * 2 * (1 - e)}deg)`;
+      swapImgEl.style.opacity = String(e);
+      if (espejoCobraT >= 1) {
+        swapImgEl.style.opacity = '1';
+        // La polaroid ya cubrió la pantalla → limpiar el stage
+        clearRevealStage();
+      }
+    }
+  }
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);

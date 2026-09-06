@@ -10,7 +10,7 @@ Es una foto de tu cara.
 Una IA la analiza.
 Otra extrae sus contornos.
 Una tercera genera un retrato nuevo.
-Y una cuarta que refleja esa cara en vos.
+Y una cuarta refleja esa cara en vos.
 Todo en tiempo real. Lo ves todo en  pantalla.`;
 
 export const WELCOME_HINT = '> Saludá con la mano para empezar';
