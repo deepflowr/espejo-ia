@@ -34,3 +34,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Notas personales de la autora (no se suben al repo)
+docs/
